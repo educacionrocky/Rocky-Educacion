@@ -13,8 +13,10 @@ export const Sidebar=()=>{
     if(isSuperAdmin()) sections.push(section('Gobierno',[ navLink('Centro de Permisos','/permissions') ]));
     const adminLinks=[]; if(can(PERMS.MANAGE_USERS)) adminLinks.push(navLink('Usuarios','/users')); if(can(PERMS.MANAGE_ZONES)) adminLinks.push(navLink('Zonas','/zones'));
     if(can(PERMS.MANAGE_DEPENDENCIES)) adminLinks.push(navLink('Dependencias','/dependencies'));
-    if(can(PERMS.MANAGE_DEPENDENCIES)) adminLinks.push(navLink('Sedes','/sedes'));
+    if(can(PERMS.MANAGE_SEDES)) adminLinks.push(navLink('Sedes','/sedes'));
     if(can(PERMS.MANAGE_EMPLOYEES)) adminLinks.push(navLink('Empleados','/employees'));
+    if(can(PERMS.MANAGE_EMPLOYEES)) adminLinks.push(navLink('Cargos','/cargos'));
+    if(can(PERMS.MANAGE_EMPLOYEES)) adminLinks.push(navLink('Novedades','/novedades'));
     if(can(PERMS.MANAGE_SUPERVISORS)) adminLinks.push(navLink('Supervisores','/supervisors'));
     if(adminLinks.length) sections.push(section('Administración',adminLinks));
     const editorLinks=[]; if(can(PERMS.IMPORT_DATA)) editorLinks.push(navLink('Importar datos','/imports')); if(can(PERMS.VIEW_IMPORT_HISTORY)) editorLinks.push(navLink('Historial de importaciones','/import-history')); if(can(PERMS.RUN_PAYROLL)) editorLinks.push(navLink('Nómina','/payroll')); if(can(PERMS.MANAGE_ABSENTEEISM)) editorLinks.push(navLink('Ausentismo','/absenteeism'));

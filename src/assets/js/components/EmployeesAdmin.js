@@ -1,1 +1,242 @@
-import { el } from '../utils/dom.js'; export const EmployeesAdmin=(mount)=>{ mount.replaceChildren(el('section',{className:'main-card'},[ el('h2',{},['Empleados']), el('p',{},['(CRUD en próxima iteración)']) ])); };
+import { el, qs } from '../utils/dom.js';
+export const EmployeesAdmin=(mount,deps={})=>{
+  const ui=el('section',{className:'main-card'},[
+    el('h2',{},['Empleados']),
+    el('div',{className:'tabs mt-2'},[
+      el('button',{id:'tabCreateBtn',className:'tab',type:'button'},['Crear']),
+      el('button',{id:'tabListBtn',className:'tab is-active',type:'button'},['Consultar'])
+    ]),
+    el('div',{id:'tabCreate',className:'hidden'},[
+      el('div',{className:'form-row mt-2'},[
+        el('div',{},[ el('label',{className:'label'},['Codigo (automatico)']), el('input',{id:'eCode',className:'input',placeholder:'Se generara al crear',disabled:true}) ]),
+        el('div',{},[ el('label',{className:'label'},['Documento']), el('input',{id:'eDoc',className:'input',placeholder:'Documento del empleado'}) ]),
+        el('div',{},[ el('label',{className:'label'},['Nombre completo']), el('input',{id:'eName',className:'input',placeholder:'Nombre completo'}) ]),
+        el('div',{},[ el('label',{className:'label'},['Telefono']), el('input',{id:'ePhone',className:'input',placeholder:'Telefono'}) ]),
+        el('div',{},[ el('label',{className:'label'},['Cargo']), el('select',{id:'eCargo',className:'select'},[]) ]),
+        el('div',{},[ el('label',{className:'label'},['Sede']), el('select',{id:'eSede',className:'select'},[]) ]),
+        el('div',{},[ el('label',{className:'label'},['Fecha ingreso']), el('input',{id:'eIngreso',className:'input',type:'date'}) ]),
+        el('button',{id:'btnCreate',className:'btn btn--primary'},['Crear empleado']),
+        el('span',{id:'msgCreate',className:'text-muted'},[' '])
+      ])
+    ]),
+    el('div',{id:'tabList'},[
+      el('div',{className:'form-row'},[
+        el('div',{},[ el('label',{className:'label'},['Buscar']), el('input',{id:'txtSearch',className:'input',placeholder:'Codigo, documento, nombre o sede...'}) ]),
+        el('div',{},[ el('label',{className:'label'},['Estado']), el('select',{id:'selStatus',className:'select'},[ el('option',{value:''},['Todos']), el('option',{value:'activo'},['Activos']), el('option',{value:'inactivo'},['Inactivos']) ]) ]),
+        el('span',{className:'right text-muted'},['Doble clic en una fila para editar.'])
+      ]),
+      el('div',{className:'mt-2 table-wrap'},[
+        el('table',{className:'table',id:'tbl'},[
+          el('thead',{},[ el('tr',{},[
+            el('th',{},['Codigo']),
+            el('th',{},['Documento']),
+            el('th',{},['Nombre']),
+            el('th',{},['Telefono']),
+            el('th',{},['Cargo']),
+            el('th',{},['Sede']),
+            el('th',{},['Estado']),
+            el('th',{},['Ingreso']),
+            el('th',{},['Retiro']),
+            el('th',{},['Modificado por']),
+            el('th',{},['Acciones'])
+          ]) ]),
+          el('tbody',{})
+        ])
+      ]),
+      el('p',{id:'msg',className:'text-muted mt-2'},[' '])
+    ])
+  ]);
+
+  const tabCreateBtn=qs('#tabCreateBtn',ui);
+  const tabListBtn=qs('#tabListBtn',ui);
+  const tabCreate=qs('#tabCreate',ui);
+  const tabList=qs('#tabList',ui);
+  function setTab(which){
+    const isCreate=which==='create';
+    tabCreateBtn.classList.toggle('is-active',isCreate);
+    tabListBtn.classList.toggle('is-active',!isCreate);
+    tabCreate.classList.toggle('hidden',!isCreate);
+    tabList.classList.toggle('hidden',isCreate);
+  }
+  tabCreateBtn.addEventListener('click',()=> setTab('create'));
+  tabListBtn.addEventListener('click',()=> setTab('list'));
+
+  let sedeList=[]; let cargoList=[];
+  const sedeSelect=qs('#eSede',ui); const cargoSelect=qs('#eCargo',ui);
+  function buildOptions(items, selected){
+    const opts=[ el('option',{value:''},['Seleccione...']) ];
+    items.forEach((item)=>{
+      const code=item.codigo||''; const label=item.nombre||code||'-';
+      opts.push(el('option',{value:code, selected: code && code===selected},[ `${label} (${code||'-'})` ]));
+    });
+    return opts;
+  }
+  function renderSedeSelect(){
+    const cur=sedeSelect.value;
+    sedeSelect.replaceChildren(...buildOptions(sedeList,cur));
+  }
+  function renderCargoSelect(){
+    const cur=cargoSelect.value;
+    cargoSelect.replaceChildren(...buildOptions(cargoList,cur));
+  }
+  const unSedes=deps.streamSedes?.((arr)=>{ sedeList=(arr||[]).filter(s=>s.estado!=='inactivo'); renderSedeSelect(); render(); });
+  const unCargos=deps.streamCargos?.((arr)=>{ cargoList=(arr||[]).filter(c=>c.estado!=='inactivo'); renderCargoSelect(); render(); });
+  const sedeNameByCode=(code)=> sedeList.find(s=>s.codigo===code)?.nombre || '-';
+  const cargoNameByCode=(code)=> cargoList.find(c=>c.codigo===code)?.nombre || '-';
+
+  qs('#btnCreate',ui).addEventListener('click',async()=>{
+    const doc=qs('#eDoc',ui).value.trim();
+    const name=qs('#eName',ui).value.trim();
+    const phone=qs('#ePhone',ui).value.trim();
+    const cargoCode=qs('#eCargo',ui).value;
+    const sedeCode=qs('#eSede',ui).value;
+    const ingreso=qs('#eIngreso',ui).value;
+    const msg=qs('#msgCreate',ui); msg.textContent=' ';
+    if(!doc){ msg.textContent='Escribe el documento.'; return; }
+    if(!name){ msg.textContent='Escribe el nombre completo.'; return; }
+    if(!phone){ msg.textContent='Escribe el telefono.'; return; }
+    if(!cargoCode){ msg.textContent='Selecciona un cargo.'; return; }
+    if(!sedeCode){ msg.textContent='Selecciona una sede.'; return; }
+    if(!ingreso){ msg.textContent='Selecciona la fecha de ingreso.'; return; }
+    try{
+      const dupDoc=await deps.findEmployeeByDocument?.(doc);
+      if(dupDoc) { msg.textContent='Ya existe un empleado con ese documento.'; return; }
+      const code=await deps.getNextEmployeeCode?.();
+      const cargo=cargoList.find(c=>c.codigo===cargoCode);
+      const sede=sedeList.find(s=>s.codigo===sedeCode);
+      const id=await deps.createEmployee?.({
+        codigo:code,
+        documento:doc,
+        nombre:name,
+        telefono:phone,
+        cargoCodigo:cargoCode,
+        cargoNombre:cargo?.nombre||null,
+        sedeCodigo:sedeCode,
+        sedeNombre:sede?.nombre||null,
+        fechaIngreso: new Date(`${ingreso}T00:00:00`)
+      });
+      await deps.addAuditLog?.({ targetType:'employee', targetId:id, action:'create_employee', after:{ codigo:code, documento:doc, nombre:name, sedeCodigo:sedeCode, estado:'activo' } });
+      qs('#eDoc',ui).value=''; qs('#eName',ui).value=''; qs('#ePhone',ui).value=''; qs('#eIngreso',ui).value=''; renderCargoSelect(); renderSedeSelect();
+      msg.textContent='Empleado creado OK'; setTab('list'); setTimeout(()=> msg.textContent=' ',1200);
+    }catch(e){ msg.textContent='Error: '+(e?.message||e); }
+  });
+
+  let snapshot=[]; const tbody=ui.querySelector('tbody');
+  const search=()=> qs('#txtSearch',ui).value.trim().toLowerCase();
+  const filterStatus=()=> qs('#selStatus',ui).value;
+  function render(){
+    const term=search(); const st=filterStatus();
+    const data=snapshot.filter(e=>{
+      const text=[e.codigo,e.documento,e.nombre,e.cargoNombre,cargoNameByCode(e.cargoCodigo),e.sedeNombre,sedeNameByCode(e.sedeCodigo)].join(' ').toLowerCase();
+      return (!term || text.includes(term)) && (!st || e.estado===st);
+    });
+    tbody.replaceChildren(...data.map(e=> row(e)));
+  }
+  function row(e){
+    const tr=el('tr',{'data-id':e.id});
+    const tdCodigo=el('td',{},[e.codigo||'-']);
+    const tdDoc=el('td',{},[e.documento||'-']);
+    const tdNombre=el('td',{},[e.nombre||'-']);
+    const tdTel=el('td',{},[e.telefono||'-']);
+    const tdCargo=el('td',{},[ e.cargoNombre||cargoNameByCode(e.cargoCodigo) ]);
+    const tdSede=el('td',{},[ e.sedeNombre||sedeNameByCode(e.sedeCodigo) ]);
+    const tdEstado=el('td',{},[ statusBadge(e.estado) ]);
+    const tdIngreso=el('td',{},[ formatDate(e.fechaIngreso) ]);
+    const tdRetiro=el('td',{},[ formatDate(e.fechaRetiro) ]);
+    const tdMod=el('td',{},[ e.lastModifiedByEmail||e.lastModifiedByUid||'-' ]);
+    const tdAcc=el('td',{},[ actionsCell(e) ]);
+    tr.addEventListener('dblclick',()=> startEdit(tr,e));
+    tr.append(tdCodigo,tdDoc,tdNombre,tdTel,tdCargo,tdSede,tdEstado,tdIngreso,tdRetiro,tdMod,tdAcc);
+    return tr;
+  }
+  function statusBadge(st){ return el('span',{className:'badge '+(st==='activo'?'badge--ok':'badge--off')},[st||'-']); }
+  function formatDate(ts){
+    try{
+      const d=ts?.toDate? ts.toDate(): (ts? new Date(ts): null);
+      return d? new Date(d).toLocaleDateString(): '-';
+    }catch{ return '-'; }
+  }
+  function actionsCell(e){
+    const box=el('div',{className:'row-actions'},[]);
+    const btnEdit=el('button',{className:'btn'},['Editar']);
+    btnEdit.addEventListener('click',()=>{ const tr=tbody.querySelector(`tr[data-id="${e.id}"]`); if(tr) startEdit(tr,e); });
+    const btnToggle=el('button',{className:'btn '+(e.estado==='activo'?'btn--danger':'' )},[ e.estado==='activo'?'Desactivar':'Activar' ]);
+    btnToggle.addEventListener('click',async()=>{
+      const target=e.estado==='activo'?'inactivo':'activo';
+      if(!window.confirm(`${e.estado==='activo'?'Desactivar':'Activar'} empleado "${e.nombre}"?`)) return;
+      try{ await deps.setEmployeeStatus?.(e.id,target); await deps.addAuditLog?.({ targetType:'employee', targetId:e.id, action: target==='activo'?'activate_employee':'deactivate_employee', before:{estado:e.estado}, after:{estado:target} }); }catch(err){ alert('Error: '+(err?.message||err)); }
+    });
+    box.append(btnEdit,btnToggle); return box;
+  }
+  function startEdit(tr,e){
+    const cur={
+      codigo:e.codigo||'',
+      documento:e.documento||'',
+      nombre:e.nombre||'',
+      telefono:e.telefono||'',
+      cargoCodigo:e.cargoCodigo||'',
+      sedeCodigo:e.sedeCodigo||'',
+      fechaIngreso: toInputDate(e.fechaIngreso)
+    };
+    const tds=tr.querySelectorAll('td');
+    tds[0].replaceChildren(el('input',{className:'input',value:cur.codigo,style:'max-width:140px'}));
+    tds[1].replaceChildren(el('input',{className:'input',value:cur.documento,style:'max-width:160px'}));
+    tds[2].replaceChildren(el('input',{className:'input',value:cur.nombre,style:'max-width:220px'}));
+    tds[3].replaceChildren(el('input',{className:'input',value:cur.telefono,style:'max-width:140px'}));
+    tds[4].replaceChildren(el('select',{className:'select'},buildOptions(cargoList,cur.cargoCodigo)));
+    tds[5].replaceChildren(el('select',{className:'select'},buildOptions(sedeList,cur.sedeCodigo)));
+    tds[6].replaceChildren(statusBadge(e.estado));
+    tds[7].replaceChildren(el('input',{className:'input',type:'date',value:cur.fechaIngreso||''}));
+    tds[8].textContent=formatDate(e.fechaRetiro);
+    tds[9].textContent=e.lastModifiedByEmail||e.lastModifiedByUid||'-';
+    const box=el('div',{className:'row-actions'},[]);
+    const btnSave=el('button',{className:'btn btn--primary'},['Guardar']);
+    const btnCancel=el('button',{className:'btn'},['Cancelar']);
+    btnSave.addEventListener('click',async()=>{
+      const newCode=tds[0].querySelector('input').value.trim();
+      const newDoc=tds[1].querySelector('input').value.trim();
+      const newName=tds[2].querySelector('input').value.trim();
+      const newPhone=tds[3].querySelector('input').value.trim();
+      const newCargoCode=tds[4].querySelector('select').value;
+      const newSedeCode=tds[5].querySelector('select').value;
+      const newIngreso=tds[7].querySelector('input').value.trim();
+      if(!newCode||!newDoc||!newName||!newPhone) return alert('Completa codigo, documento, nombre y telefono.');
+      if(!newCargoCode) return alert('Selecciona un cargo.');
+      if(!newSedeCode) return alert('Selecciona una sede.');
+      if(!newIngreso) return alert('Selecciona la fecha de ingreso.');
+      try{
+        if(newCode!==e.codigo){ const dup=await deps.findEmployeeByCode?.(newCode); if(dup && dup.id!==e.id) return alert('Ya existe un empleado con ese codigo.'); }
+        if(newDoc!==e.documento){ const dupDoc=await deps.findEmployeeByDocument?.(newDoc); if(dupDoc && dupDoc.id!==e.id) return alert('Ya existe un empleado con ese documento.'); }
+        const newCargo=cargoList.find(c=>c.codigo===newCargoCode);
+        const newSede=sedeList.find(s=>s.codigo===newSedeCode);
+        await deps.updateEmployee?.(e.id,{
+          codigo:newCode,
+          documento:newDoc,
+          nombre:newName,
+          telefono:newPhone,
+          cargoCodigo:newCargoCode,
+          cargoNombre:newCargo?.nombre||null,
+          sedeCodigo:newSedeCode,
+          sedeNombre:newSede?.nombre||null,
+          fechaIngreso: new Date(`${newIngreso}T00:00:00`)
+        });
+        await deps.addAuditLog?.({ targetType:'employee', targetId:e.id, action:'update_employee', before:{ codigo:e.codigo, documento:e.documento, nombre:e.nombre, sedeCodigo:e.sedeCodigo }, after:{ codigo:newCode, documento:newDoc, nombre:newName, sedeCodigo:newSedeCode } });
+      }catch(err){ alert('Error: '+(err?.message||err)); }
+    });
+    btnCancel.addEventListener('click',()=> render());
+    box.append(btnSave,btnCancel); tds[10].replaceChildren(box);
+  }
+  function toInputDate(ts){
+    try{
+      const d=ts?.toDate? ts.toDate(): (ts? new Date(ts): null);
+      if(!d) return '';
+      const pad=(n)=> String(n).padStart(2,'0');
+      return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+    }catch{ return ''; }
+  }
+  const un=deps.streamEmployees?.((arr)=>{ snapshot=arr||[]; render(); });
+  qs('#txtSearch',ui).addEventListener('input',render);
+  qs('#selStatus',ui).addEventListener('change',render);
+  mount.replaceChildren(ui);
+  return ()=>{ un?.(); unSedes?.(); unCargos?.(); };
+};
