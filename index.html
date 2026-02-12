@@ -1,26 +1,24 @@
-
 <!DOCTYPE html>
-<html lang="es">
+<html lang="es" data-theme="light">
 <head>
-  <meta charset="UTF-8">
-  <title>Mi primer proyecto</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-
-  <!-- CSS -->
-  <link rel="stylesheet" href="css/styles.css">
+  <meta charset="UTF-8" />
+  <title>RockyPro</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="RockyPro v5.2: All‑in‑One completo + Zonas y Dependencias con código automático"/>
+  <link rel="stylesheet" href="src/assets/css/base.css" />
+  <link rel="stylesheet" href="src/assets/css/layout.css" />
+  <link rel="stylesheet" href="src/assets/css/components.css" />
+  <link rel="stylesheet" href="src/assets/css/utils.css" />
 </head>
 <body>
-
-  <header>
-    <h1>Mi primer proyecto web</h1>
-  </header>
-
-  <main>
-    <p id="mensaje">Hola mundo</p>
-    <button id="btnCambiar">Cambiar mensaje</button>
-  </main>
-
-  <!-- JavaScript -->
-  <script src="js/app.js"></script>
+  <div class="app-layout">
+    <aside id="app-sidebar" class="sidebar"></aside>
+    <div class="app-content">
+      <header id="app-header" class="header"></header>
+      <main id="app-root" class="container"></main>
+      <footer id="app-footer" class="footer"></footer>
+    </div>
+  </div>
+  <script type="module" src="src/assets/js/app.js"></script>
 </body>
 </html>

@@ -1,0 +1,1 @@
+import { el } from '../utils/dom.js';export const Footer=()=> el('div',{className:'container'},[ el('p',{className:'text-muted'},['© ', new Date().getFullYear().toString(), ' - RockyPro']) ]);

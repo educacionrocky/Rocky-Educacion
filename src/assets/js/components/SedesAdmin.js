@@ -1,0 +1,1 @@
+import { el } from '../utils/dom.js'; export const SedesAdmin=(mount)=>{ mount.replaceChildren(el('section',{className:'main-card'},[ el('h2',{},['Sedes']), el('p',{},['(CRUD en próxima iteración)']) ])); };

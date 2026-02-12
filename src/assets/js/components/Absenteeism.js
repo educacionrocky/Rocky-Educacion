@@ -1,0 +1,1 @@
+import { el } from '../utils/dom.js'; export const Absenteeism=(mount)=>{ mount.replaceChildren(el('section',{className:'main-card'},[ el('h2',{},['Ausentismo']), el('p',{},['(Módulo en próxima iteración)']) ])); };

@@ -1,0 +1,1 @@
+import { el } from '../utils/dom.js'; export const ImportHistory=(mount)=>{ mount.replaceChildren(el('section',{className:'main-card'},[ el('h2',{},['Historial de importaciones']), el('p',{},['(Integración en próxima iteración)']) ])); };

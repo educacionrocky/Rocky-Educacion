@@ -1,0 +1,1 @@
+export const qs=(sel,scope=document)=>scope.querySelector(sel);export const qsa=(sel,scope=document)=>Array.from(scope.querySelectorAll(sel));export const el=(tag,props={},children=[])=>{const node=Object.assign(document.createElement(tag),props); for(const child of [].concat(children)){node.append(child?.nodeType?child:document.createTextNode(child??''));} return node;};

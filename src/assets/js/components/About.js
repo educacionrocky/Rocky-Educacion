@@ -1,0 +1,1 @@
+import { el } from '../utils/dom.js';export const About=(mount)=>{ mount.replaceChildren(el('section',{className:'main-card'},[ el('h2',{},['Acerca de']), el('p',{className:'mt-1'},['RockyPro v5.2 — Integración completa + Dependencias CRUD.']) ])); };

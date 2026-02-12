@@ -1,0 +1,1 @@
+import { el } from '../utils/dom.js'; export const Reports=(mount)=>{ mount.replaceChildren(el('section',{className:'main-card'},[ el('h2',{},['Reportes']), el('p',{},['(Módulo en próxima iteración)']) ])); };
