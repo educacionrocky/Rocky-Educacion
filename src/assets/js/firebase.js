@@ -58,6 +58,9 @@ function replaceUndefined(value){
   if(value === undefined) return null;
   if(Array.isArray(value)) return value.map(replaceUndefined);
   if(value && typeof value === 'object'){
+    // Preserve Firestore sentinels and class instances (e.g. serverTimestamp, Timestamp, Date)
+    const proto=Object.getPrototypeOf(value);
+    if(proto && proto.constructor && proto.constructor.name!=='Object') return value;
     const out={};
     for(const [k,v] of Object.entries(value)) out[k]=replaceUndefined(v);
     return out;
@@ -212,6 +215,44 @@ export async function setEmployeeStatus(id,estado){
 export async function findEmployeeByCode(codigo){ if(!codigo) return null; const ref=collection(db,EMPLOYEES_COL); const qy=query(ref, where('codigo','==', codigo)); const snap=await getDocs(qy); if(snap.empty) return null; const d=snap.docs[0]; return { id:d.id, ...d.data() };
 }
 export async function findEmployeeByDocument(documento){ if(!documento) return null; const ref=collection(db,EMPLOYEES_COL); const qy=query(ref, where('documento','==', documento)); const snap=await getDocs(qy); if(snap.empty) return null; const d=snap.docs[0]; return { id:d.id, ...d.data() };
+}
+export async function createEmployeesBulk(rows=[]){
+  const data=Array.isArray(rows)? rows.filter(Boolean): [];
+  if(!data.length) return { created:0 };
+  const start=await runTransaction(db, async (tx)=>{
+    const ref=doc(db,COUNTERS_COL,'employees');
+    const snap=await tx.get(ref);
+    const last=snap.exists()? Number(snap.data().last||0) : 0;
+    const next=last+data.length;
+    tx.set(ref,{ last: next },{ merge:true });
+    return last+1;
+  });
+  const batch=writeBatch(db);
+  data.forEach((row,idx)=>{
+    const code=`EMP-${String(start+idx).padStart(4,'0')}`;
+    const ref=doc(collection(db,EMPLOYEES_COL));
+    batch.set(ref, replaceUndefined({
+      codigo:code,
+      documento:row.documento||null,
+      nombre:row.nombre||null,
+      telefono:row.telefono||null,
+      cargoCodigo:row.cargoCodigo||null,
+      cargoNombre:row.cargoNombre||null,
+      sedeCodigo:row.sedeCodigo||null,
+      sedeNombre:row.sedeNombre||null,
+      fechaIngreso:row.fechaIngreso||null,
+      fechaRetiro:null,
+      estado:'activo',
+      createdByUid:auth.currentUser?.uid||null,
+      createdByEmail:(auth.currentUser?.email||'').toLowerCase()||null,
+      createdAt: serverTimestamp(),
+      lastModifiedByUid:auth.currentUser?.uid||null,
+      lastModifiedByEmail:(auth.currentUser?.email||'').toLowerCase()||null,
+      lastModifiedAt: serverTimestamp()
+    }));
+  });
+  await batch.commit();
+  return { created:data.length };
 }
 
 // ===== Supervisores =====

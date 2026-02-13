@@ -62,7 +62,7 @@ export const UploadData=(mount,deps={})=>{
       if(!date){ msg.textContent='Selecciona una fecha.'; return; }
 
       const rows=await fetchSheetRows();
-      const byDate=rows.filter(r=> normalizeDate(r.Fecha)===date);
+      const byDate=rows.filter(r=> normalizeDate(r.fecha)===date);
       if(!byDate.length){ msg.textContent='No hay registros para esa fecha.'; fillSummary(0,0,0,0); renderTables([],[]); return; }
 
       const operarioCodes=new Set(cargos.filter(c=> (c.nombre||'').toLowerCase()==='operario').map(c=> c.codigo));
@@ -74,7 +74,7 @@ export const UploadData=(mount,deps={})=>{
 
       const regDocs=new Map();
       for(const r of byDate){
-        const doc=String(r.Documento||'').trim();
+        const doc=String(r.documento||'').trim();
         if(!doc) continue;
         if(!regDocs.has(doc)) regDocs.set(doc,r);
       }
@@ -138,9 +138,9 @@ export const UploadData=(mount,deps={})=>{
     tbExtra.replaceChildren(...extra.map(r=>{
       return el('tr',{},[
         el('td',{},['Registro']),
-        el('td',{},[String(r.Documento||'-')]),
-        el('td',{},[String(r.Nombre||'-')]),
-        el('td',{},[String(r.Novedad||'-')])
+        el('td',{},[String(r.documento||'-')]),
+        el('td',{},[String(r.nombre||'-')]),
+        el('td',{},[String(r.novedad||'-')])
       ]);
     }));
     tbSedes.replaceChildren(...(sedeDiffs||[]).map(s=>{
@@ -194,12 +194,12 @@ export const UploadData=(mount,deps={})=>{
       sedeNombre: op.sedeNombre||null
     }));
     const extraDocs=Array.from(regDocs.values()).filter(r=>{
-      const doc=String(r.Documento||'').trim();
+      const doc=String(r.documento||'').trim();
       return !operarios.some(op=> String(op.documento||'').trim()===doc);
     }).map(r=>({
-      documento: String(r.Documento||'').trim()||null,
-      nombre: String(r.Nombre||'').trim()||null,
-      novedad: String(r.Novedad||'').trim()||null
+      documento: String(r.documento||'').trim()||null,
+      nombre: String(r.nombre||'').trim()||null,
+      novedad: String(r.novedad||'').trim()||null
     }));
 
     const attendance=operarios.map(op=>{
@@ -213,7 +213,7 @@ export const UploadData=(mount,deps={})=>{
         sedeCodigo: op.sedeCodigo||null,
         sedeNombre: op.sedeNombre||null,
         asistio: Boolean(reg),
-        novedad: reg? String(reg.Novedad||'').trim()||null : null
+        novedad: reg? String(reg.novedad||'').trim()||null : null
       };
     });
 
@@ -283,12 +283,12 @@ export const UploadData=(mount,deps={})=>{
     }
     if(!rows.length) return [];
     let headers=rows[0].map(h=> String(h||'').trim());
-    const hasHeader=headers.some(h=> ['Fecha','Hora','Nombre','Documento','Novedad'].includes(h));
+    const hasHeader=headers.some(h=> canonicalHeader(h));
     if(!hasHeader){
-      headers=['Fecha','Hora','Nombre','Documento','Novedad'];
-      return rows.map(cols=> mapRow(headers, cols));
+      headers=['HORA','FECHA','NUMERO CEL','NOMBRE','DOCUMENTO','NOVEDAD'];
+      return rows.map(cols=> toCanonicalRow(mapRow(headers, cols)));
     }
-    return rows.slice(1).map(cols=> mapRow(headers, cols));
+    return rows.slice(1).map(cols=> toCanonicalRow(mapRow(headers, cols)));
   }
 
   function parseCSV(text){
@@ -321,15 +321,71 @@ export const UploadData=(mount,deps={})=>{
     return row;
   }
 
+  function canonicalHeader(value){
+    const h=String(value||'').trim().toUpperCase();
+    if(!h) return '';
+    if(h==='HORA') return 'hora';
+    if(h==='FECHA') return 'fecha';
+    if(h==='NUMERO CEL' || h==='NUMERO_CEL' || h==='CELULAR' || h==='NUMERO CELULAR') return 'numeroCel';
+    if(h==='NOMBRE') return 'nombre';
+    if(h==='DOCUMENTO') return 'documento';
+    if(h==='NOVEDAD') return 'novedad';
+    return '';
+  }
+
+  function toCanonicalRow(row){
+    const out={ hora:'', fecha:'', numeroCel:'', nombre:'', documento:'', novedad:'' };
+    Object.keys(row||{}).forEach((k)=>{
+      const key=canonicalHeader(k);
+      if(!key) return;
+      out[key]=row[k]??'';
+    });
+    out.hora=normalizeTime(out.hora);
+    return out;
+  }
+
+  function normalizeTime(value){
+    const v=String(value||'').trim();
+    if(!v) return '';
+    // Soporta h,m | h.m | hh.mm | hh,mm | hh:mm
+    const cleaned=v.replace(/\s+/g,'');
+    const parts=cleaned.split(/[:.,]/).map(p=> p.trim()).filter(Boolean);
+    if(parts.length===0) return '';
+    let h=Number(parts[0]);
+    let m=parts.length>1 ? Number(parts[1]) : 0;
+    if(!Number.isFinite(h) || !Number.isFinite(m)) return '';
+    if(h<0 || h>23 || m<0 || m>59) return '';
+    return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`;
+  }
+
   function normalizeDate(value){
     const v=String(value||'').trim();
     if(!v) return '';
     if(/^\d{4}-\d{2}-\d{2}$/.test(v)) return v;
-    const parts=v.split(/[\/\-]/).map(p=> p.trim());
+
+    // Acepta d-m-aaaa, d-m-aa, dd-m-aaaa, dd-mm-aaaa, d-mm-aa (tambien con / o .)
+    const parts=v.split(/[\/\-.]/).map(p=> p.trim()).filter(Boolean);
     if(parts.length===3){
-      const [a,b,c]=parts;
-      if(a.length===4) return `${a.padStart(4,'0')}-${b.padStart(2,'0')}-${c.padStart(2,'0')}`;
-      return `${c.padStart(4,'0')}-${b.padStart(2,'0')}-${a.padStart(2,'0')}`;
+      let day=''; let month=''; let year='';
+      if(parts[0].length===4){
+        // yyyy-m-d
+        year=parts[0]; month=parts[1]; day=parts[2];
+      }else{
+        // d-m-yyyy o d-m-yy
+        day=parts[0]; month=parts[1]; year=parts[2];
+      }
+
+      const dNum=Number(day);
+      const mNum=Number(month);
+      let yNum=Number(year);
+      if(!Number.isFinite(dNum) || !Number.isFinite(mNum) || !Number.isFinite(yNum)) return '';
+      if(year.length===2) yNum=2000+yNum;
+      if(dNum<1 || dNum>31 || mNum<1 || mNum>12) return '';
+
+      const dStr=String(dNum).padStart(2,'0');
+      const mStr=String(mNum).padStart(2,'0');
+      const yStr=String(yNum).padStart(4,'0');
+      return `${yStr}-${mStr}-${dStr}`;
     }
     return '';
   }

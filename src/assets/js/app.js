@@ -16,6 +16,7 @@ import { EmployeesAdmin } from './components/EmployeesAdmin.js';
 import { SupervisorsAdmin } from './components/SupervisorsAdmin.js';
 import { CargosAdmin } from './components/CargosAdmin.js';
 import { NovedadesAdmin } from './components/NovedadesAdmin.js';
+import { CargueMasivoAdmin } from './components/CargueMasivoAdmin.js';
 import { ImportHistory } from './components/ImportHistory.js';
 import { Payroll } from './components/Payroll.js';
 import { Absenteeism } from './components/Absenteeism.js';
@@ -62,6 +63,7 @@ let unsubRoleMatrix=null; let unsubUserOverrides=null; let unsubAudit=null;
         streamSedes:fb.streamSedes, createSede:fb.createSede, updateSede:fb.updateSede, setSedeStatus:fb.setSedeStatus, findSedeByCode:fb.findSedeByCode, getNextSedeCode:fb.getNextSedeCode,
         // empleados
         streamEmployees:fb.streamEmployees, createEmployee:fb.createEmployee, updateEmployee:fb.updateEmployee, setEmployeeStatus:fb.setEmployeeStatus, findEmployeeByCode:fb.findEmployeeByCode, findEmployeeByDocument:fb.findEmployeeByDocument, getNextEmployeeCode:fb.getNextEmployeeCode,
+        createEmployeesBulk:fb.createEmployeesBulk,
         // cargos
         streamCargos:fb.streamCargos, createCargo:fb.createCargo, updateCargo:fb.updateCargo, setCargoStatus:fb.setCargoStatus, findCargoByCode:fb.findCargoByCode, getNextCargoCode:fb.getNextCargoCode,
         // novedades
@@ -100,6 +102,7 @@ let unsubRoleMatrix=null; let unsubUserOverrides=null; let unsubAudit=null;
   addRoute('/dependencies', ()=> requireAuth(()=> guard(PERMS.MANAGE_DEPENDENCIES, ()=> DependenciesAdmin(root, deps))));
   addRoute('/sedes', ()=> requireAuth(()=> guard(PERMS.MANAGE_SEDES, ()=> SedesAdmin(root, deps))));
   addRoute('/employees', ()=> requireAuth(()=> guard(PERMS.MANAGE_EMPLOYEES, ()=> EmployeesAdmin(root, deps))));
+  addRoute('/bulk-upload', ()=> requireAuth(()=> guard(PERMS.MANAGE_EMPLOYEES, ()=> CargueMasivoAdmin(root, deps))));
   addRoute('/cargos', ()=> requireAuth(()=> guard(PERMS.MANAGE_EMPLOYEES, ()=> CargosAdmin(root, deps))));
   addRoute('/novedades', ()=> requireAuth(()=> guard(PERMS.MANAGE_EMPLOYEES, ()=> NovedadesAdmin(root, deps))));
   addRoute('/supervisors', ()=> requireAuth(()=> guard(PERMS.MANAGE_SUPERVISORS, ()=> SupervisorsAdmin(root, deps))));
