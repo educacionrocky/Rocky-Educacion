@@ -158,6 +158,38 @@ export async function updateSede(id,{ codigo, nombre, dependenciaCodigo, depende
 export async function setSedeStatus(id,estado){ const ref=doc(db,SEDES_COL,id); await updateDoc(ref,replaceUndefined({ estado })); }
 export async function findSedeByCode(codigo){ if(!codigo) return null; const ref=collection(db,SEDES_COL); const qy=query(ref, where('codigo','==', codigo)); const snap=await getDocs(qy); if(snap.empty) return null; const d=snap.docs[0]; return { id:d.id, ...d.data() };
 }
+export async function createSedesBulk(rows=[]){
+  const data=Array.isArray(rows)? rows.filter(Boolean): [];
+  if(!data.length) return { created:0 };
+  const start=await runTransaction(db, async (tx)=>{
+    const ref=doc(db,COUNTERS_COL,'sedes');
+    const snap=await tx.get(ref);
+    const last=snap.exists()? Number(snap.data().last||0) : 0;
+    const next=last+data.length;
+    tx.set(ref,{ last: next },{ merge:true });
+    return last+1;
+  });
+  const batch=writeBatch(db);
+  data.forEach((row,idx)=>{
+    const code=`SED-${String(start+idx).padStart(4,'0')}`;
+    const ref=doc(collection(db,SEDES_COL));
+    batch.set(ref, replaceUndefined({
+      codigo:code,
+      nombre:row.nombre||null,
+      dependenciaCodigo:row.dependenciaCodigo||null,
+      dependenciaNombre:row.dependenciaNombre||null,
+      zonaCodigo:row.zonaCodigo||null,
+      zonaNombre:row.zonaNombre||null,
+      numeroOperarios: typeof row.numeroOperarios==='number' ? row.numeroOperarios : null,
+      estado:'activo',
+      createdByUid:auth.currentUser?.uid||null,
+      createdByEmail:(auth.currentUser?.email||'').toLowerCase()||null,
+      createdAt: serverTimestamp()
+    }));
+  });
+  await batch.commit();
+  return { created:data.length };
+}
 
 // ===== Empleados =====
 const EMPLOYEES_COL='employees';

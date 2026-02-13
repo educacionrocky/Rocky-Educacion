@@ -14,8 +14,9 @@ export const Sidebar=()=>{
     const adminLinks=[]; if(can(PERMS.MANAGE_USERS)) adminLinks.push(navLink('Usuarios','/users')); if(can(PERMS.MANAGE_ZONES)) adminLinks.push(navLink('Zonas','/zones'));
     if(can(PERMS.MANAGE_DEPENDENCIES)) adminLinks.push(navLink('Dependencias','/dependencies'));
     if(can(PERMS.MANAGE_SEDES)) adminLinks.push(navLink('Sedes','/sedes'));
+    if(can(PERMS.MANAGE_SEDES)) adminLinks.push(navLink('Cargue sedes','/bulk-upload-sedes'));
     if(can(PERMS.MANAGE_EMPLOYEES)) adminLinks.push(navLink('Empleados','/employees'));
-    if(can(PERMS.MANAGE_EMPLOYEES)) adminLinks.push(navLink('Cargue masivo','/bulk-upload'));
+    if(can(PERMS.MANAGE_EMPLOYEES)) adminLinks.push(navLink('Cargue empleados','/bulk-upload'));
     if(can(PERMS.MANAGE_EMPLOYEES)) adminLinks.push(navLink('Cargos','/cargos'));
     if(can(PERMS.MANAGE_EMPLOYEES)) adminLinks.push(navLink('Novedades','/novedades'));
     if(can(PERMS.MANAGE_SUPERVISORS)) adminLinks.push(navLink('Supervisores','/supervisors'));
