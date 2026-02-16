@@ -26,13 +26,13 @@ export const NovedadesAdmin=(mount,deps={})=>{
       el('div',{className:'mt-2 table-wrap'},[
         el('table',{className:'table',id:'tbl'},[
           el('thead',{},[ el('tr',{},[
-            el('th',{},['Codigo']),
-            el('th',{},['Codigo novedad']),
-            el('th',{},['Nombre']),
-            el('th',{},['Reemplazo']),
-            el('th',{},['Estado']),
-            el('th',{},['Creado por']),
-            el('th',{},['Creacion']),
+            el('th',{'data-sort':'codigo',style:'cursor:pointer'},['Codigo']),
+            el('th',{'data-sort':'codigoNovedad',style:'cursor:pointer'},['Codigo novedad']),
+            el('th',{'data-sort':'nombre',style:'cursor:pointer'},['Nombre']),
+            el('th',{'data-sort':'reemplazo',style:'cursor:pointer'},['Reemplazo']),
+            el('th',{'data-sort':'estado',style:'cursor:pointer'},['Estado']),
+            el('th',{'data-sort':'createdByEmail',style:'cursor:pointer'},['Creado por']),
+            el('th',{'data-sort':'createdAt',style:'cursor:pointer'},['Creacion']),
             el('th',{},['Acciones'])
           ]) ]),
           el('tbody',{})
@@ -75,9 +75,14 @@ export const NovedadesAdmin=(mount,deps={})=>{
   });
 
   let snapshot=[]; const tbody=ui.querySelector('tbody');
+  let sortKey=''; let sortDir=1;
   const search=()=> qs('#txtSearch',ui).value.trim().toLowerCase();
   const filterStatus=()=> qs('#selStatus',ui).value;
   const filterReemp=()=> qs('#selReemp',ui).value;
+  function sortVal(n,key){ if(key==='createdAt'){ try{ const x=n.createdAt?.toDate?n.createdAt.toDate(): (n.createdAt?new Date(n.createdAt):null); return x?x.getTime():0; }catch{return 0;} } return String(n[key]??'').toLowerCase(); }
+  function sortData(data){ if(!sortKey) return data; const out=[...data]; out.sort((a,b)=>{ const va=sortVal(a,sortKey); const vb=sortVal(b,sortKey); if(va===vb) return 0; return va>vb?sortDir:-sortDir; }); return out; }
+  function updateSortIndicators(){ ui.querySelectorAll('th[data-sort]').forEach((th)=>{ const base=th.dataset.baseLabel||th.textContent.replace(/\s[\^v]$/,''); th.dataset.baseLabel=base; const key=th.getAttribute('data-sort'); th.textContent=(sortKey===key)?`${base} ${sortDir===1?'^':'v'}`:base; }); }
+  function initSorting(){ ui.querySelectorAll('th[data-sort]').forEach((th)=> th.addEventListener('click',()=>{ const key=th.getAttribute('data-sort'); if(sortKey===key) sortDir=sortDir*-1; else { sortKey=key; sortDir=1; } render(); })); }
   function render(){
     const term=search(); const st=filterStatus(); const re=filterReemp();
     const data=snapshot.filter(n=>{
@@ -86,7 +91,9 @@ export const NovedadesAdmin=(mount,deps={})=>{
       const matchesReemp=!re || n.reemplazo===re;
       return matchesText && matchesStatus && matchesReemp;
     });
-    tbody.replaceChildren(...data.map(n=> row(n)));
+    tbody.replaceChildren(...sortData(data).map(n=> row(n)));
+    const msg=qs('#msg',ui); if(msg) msg.textContent=`Total registros filtrados: ${data.length}`;
+    updateSortIndicators();
   }
   function row(n){
     const tr=el('tr',{'data-id':n.id});
@@ -153,6 +160,7 @@ export const NovedadesAdmin=(mount,deps={})=>{
   qs('#txtSearch',ui).addEventListener('input',render);
   qs('#selStatus',ui).addEventListener('change',render);
   qs('#selReemp',ui).addEventListener('change',render);
+  initSorting();
   mount.replaceChildren(ui);
   return ()=> un?.();
 };

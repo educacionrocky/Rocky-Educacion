@@ -10,12 +10,14 @@ export const SedesAdmin=(mount,deps={})=>{
       el('div',{className:'form-row mt-2'},[
         el('div',{},[ el('label',{className:'label'},['Codigo (automatico)']), el('input',{id:'sCode',className:'input',placeholder:'Se generara al crear',disabled:true}) ]),
         el('div',{},[ el('label',{className:'label'},['Nombre']), el('input',{id:'sName',className:'input',placeholder:'Nombre de la sede'}) ]),
-        el('div',{},[ el('label',{className:'label'},['Dependencia']), el('select',{id:'sDep',className:'select'},[]) ]),
-        el('div',{},[ el('label',{className:'label'},['Zona']), el('select',{id:'sZone',className:'select'},[]) ]),
+        el('div',{},[ el('label',{className:'label'},['Dependencia (buscar)']), el('input',{id:'sDepSearch',className:'input',list:'sDepList',placeholder:'Nombre o codigo de dependencia'}) ]),
+        el('div',{},[ el('label',{className:'label'},['Zona (buscar)']), el('input',{id:'sZoneSearch',className:'input',list:'sZoneList',placeholder:'Nombre o codigo de zona'}) ]),
         el('div',{},[ el('label',{className:'label'},['Nro de operarios']), el('input',{id:'sOps',className:'input',type:'number',min:'0',step:'1',inputMode:'numeric',placeholder:'0'}) ]),
         el('button',{id:'btnCreate',className:'btn btn--primary'},['Crear sede']),
         el('span',{id:'msgCreate',className:'text-muted'},[' '])
-      ])
+      ]),
+      el('datalist',{id:'sDepList'},[]),
+      el('datalist',{id:'sZoneList'},[])
     ]),
     el('div',{id:'tabList'},[
       el('div',{className:'form-row'},[
@@ -26,14 +28,14 @@ export const SedesAdmin=(mount,deps={})=>{
       el('div',{className:'mt-2 table-wrap'},[
         el('table',{className:'table',id:'tbl'},[
           el('thead',{},[ el('tr',{},[
-            el('th',{},['Codigo']),
-            el('th',{},['Nombre']),
-            el('th',{},['Dependencia']),
-            el('th',{},['Zona']),
-            el('th',{},['Operarios']),
-            el('th',{},['Estado']),
-            el('th',{},['Creado por']),
-            el('th',{},['Creacion']),
+            el('th',{'data-sort':'codigo',style:'cursor:pointer'},['Codigo']),
+            el('th',{'data-sort':'nombre',style:'cursor:pointer'},['Nombre']),
+            el('th',{'data-sort':'dependenciaNombre',style:'cursor:pointer'},['Dependencia']),
+            el('th',{'data-sort':'zonaNombre',style:'cursor:pointer'},['Zona']),
+            el('th',{'data-sort':'numeroOperarios',style:'cursor:pointer'},['Operarios']),
+            el('th',{'data-sort':'estado',style:'cursor:pointer'},['Estado']),
+            el('th',{'data-sort':'createdByEmail',style:'cursor:pointer'},['Creado por']),
+            el('th',{'data-sort':'createdAt',style:'cursor:pointer'},['Creacion']),
             el('th',{},['Acciones'])
           ]) ]),
           el('tbody',{})
@@ -58,7 +60,8 @@ export const SedesAdmin=(mount,deps={})=>{
   tabListBtn.addEventListener('click',()=> setTab('list'));
 
   let depList=[]; let zoneList=[];
-  const depSelect=qs('#sDep',ui); const zoneSelect=qs('#sZone',ui);
+  const depInput=qs('#sDepSearch',ui); const zoneInput=qs('#sZoneSearch',ui);
+  const depDatalist=qs('#sDepList',ui); const zoneDatalist=qs('#sZoneList',ui);
 
   function buildOptions(items, selected){
     const opts=[ el('option',{value:''},['Seleccione...']) ];
@@ -68,18 +71,45 @@ export const SedesAdmin=(mount,deps={})=>{
     });
     return opts;
   }
-  function renderSelects(){
-    const depVal=depSelect.value; const zoneVal=zoneSelect.value;
-    depSelect.replaceChildren(...buildOptions(depList,depVal));
-    zoneSelect.replaceChildren(...buildOptions(zoneList,zoneVal));
+  function labelByCode(list, code){
+    const it=list.find(x=>x.codigo===code);
+    return it ? `${it.nombre||it.codigo} (${it.codigo||'-'})` : '';
   }
-  const unDeps=deps.streamDependencies?.((arr)=>{ depList=(arr||[]).filter(d=>d.estado!=='inactivo'); renderSelects(); render(); });
-  const unZones=deps.streamZones?.((arr)=>{ zoneList=(arr||[]).filter(z=>z.estado!=='inactivo'); renderSelects(); render(); });
+  function resolveCode(list, rawValue){
+    const raw=String(rawValue||'').trim();
+    if(!raw) return '';
+    const byCode=list.find(x=> String(x.codigo||'').toLowerCase()===raw.toLowerCase());
+    if(byCode) return byCode.codigo;
+    const m=raw.match(/\(([^)]+)\)\s*$/);
+    if(m){
+      const code=m[1].trim();
+      const byLabel=list.find(x=> String(x.codigo||'').toLowerCase()===code.toLowerCase());
+      if(byLabel) return byLabel.codigo;
+    }
+    const byName=list.find(x=> String(x.nombre||'').toLowerCase()===raw.toLowerCase());
+    return byName?.codigo||'';
+  }
+  function renderSelects(){
+    const depOpts=depList
+      .map((d)=> labelByCode(depList,d.codigo))
+      .filter((v,i,arr)=> v && arr.indexOf(v)===i)
+      .map((value)=> el('option',{value}));
+    depDatalist.replaceChildren(...depOpts);
+    const zoneOpts=zoneList
+      .map((z)=> labelByCode(zoneList,z.codigo))
+      .filter((v,i,arr)=> v && arr.indexOf(v)===i)
+      .map((value)=> el('option',{value}));
+    zoneDatalist.replaceChildren(...zoneOpts);
+  }
+  let snapshot=[]; const tbody=ui.querySelector('tbody');
+  let sortKey=''; let sortDir=1;
+  let unDeps=()=>{};
+  let unZones=()=>{};
 
   qs('#btnCreate',ui).addEventListener('click',async()=>{
     const name=qs('#sName',ui).value.trim();
-    const depCode=qs('#sDep',ui).value;
-    const zoneCode=qs('#sZone',ui).value;
+    const depCode=resolveCode(depList, depInput.value);
+    const zoneCode=resolveCode(zoneList, zoneInput.value);
     const opsRaw=qs('#sOps',ui).value.trim();
     const msg=qs('#msgCreate',ui); msg.textContent=' ';
     if(!name){ msg.textContent='Escribe el nombre de la sede.'; return; }
@@ -101,23 +131,59 @@ export const SedesAdmin=(mount,deps={})=>{
         numeroOperarios:ops
       });
       await deps.addAuditLog?.({ targetType:'sede', targetId:id, action:'create_sede', after:{ codigo:code, nombre:name, estado:'activo', dependenciaCodigo:depCode, zonaCodigo:zoneCode, numeroOperarios:ops } });
-      qs('#sName',ui).value=''; qs('#sOps',ui).value=''; renderSelects();
+      qs('#sName',ui).value=''; qs('#sOps',ui).value=''; depInput.value=''; zoneInput.value=''; renderSelects();
       msg.textContent='Sede creada OK'; setTab('list'); setTimeout(()=> msg.textContent=' ',1200);
     }catch(e){ msg.textContent='Error: '+(e?.message||e); }
   });
 
-  let snapshot=[]; const tbody=ui.querySelector('tbody');
   const search=()=> qs('#txtSearch',ui).value.trim().toLowerCase();
   const filterStatus=()=> qs('#selStatus',ui).value;
   const depNameByCode=(code)=> depList.find(d=>d.codigo===code)?.nombre || '-';
   const zoneNameByCode=(code)=> zoneList.find(z=>z.codigo===code)?.nombre || '-';
+  function toDate(ts){ try{ const d=ts?.toDate? ts.toDate(): (ts? new Date(ts): null); return d? d.getTime():0; }catch{ return 0; } }
+  function sortValue(s,key){
+    if(key==='dependenciaNombre') return (s.dependenciaNombre||depNameByCode(s.dependenciaCodigo)||'').toLowerCase();
+    if(key==='zonaNombre') return (s.zonaNombre||zoneNameByCode(s.zonaCodigo)||'').toLowerCase();
+    if(key==='numeroOperarios') return Number(s.numeroOperarios||0);
+    if(key==='createdAt') return toDate(s.createdAt);
+    return String(s[key]??'').toLowerCase();
+  }
+  function sortData(data){
+    if(!sortKey) return data;
+    const out=[...data];
+    out.sort((a,b)=>{
+      const va=sortValue(a,sortKey); const vb=sortValue(b,sortKey);
+      if(va===vb) return 0;
+      return va>vb ? sortDir : -sortDir;
+    });
+    return out;
+  }
+  function updateSortIndicators(){
+    ui.querySelectorAll('th[data-sort]').forEach((th)=>{
+      const base=th.dataset.baseLabel||th.textContent.replace(/\s[\^v]$/,'');
+      th.dataset.baseLabel=base;
+      const key=th.getAttribute('data-sort');
+      th.textContent=(sortKey===key)?`${base} ${sortDir===1?'^':'v'}`:base;
+    });
+  }
+  function initSorting(){
+    ui.querySelectorAll('th[data-sort]').forEach((th)=>{
+      th.addEventListener('click',()=>{
+        const key=th.getAttribute('data-sort');
+        if(sortKey===key) sortDir=sortDir*-1; else { sortKey=key; sortDir=1; }
+        render();
+      });
+    });
+  }
   function render(){
     const term=search(); const st=filterStatus();
     const data=snapshot.filter(s=>{
       const text=[s.codigo,s.nombre,s.dependenciaNombre,depNameByCode(s.dependenciaCodigo),s.zonaNombre,zoneNameByCode(s.zonaCodigo)].join(' ').toLowerCase();
       return (!term || text.includes(term)) && (!st || s.estado===st);
     });
-    tbody.replaceChildren(...data.map(s=> row(s)));
+    tbody.replaceChildren(...sortData(data).map(s=> row(s)));
+    const msg=qs('#msg',ui); if(msg) msg.textContent=`Total registros filtrados: ${data.length}`;
+    updateSortIndicators();
   }
   function row(s){
     const tr=el('tr',{'data-id':s.id});
@@ -159,8 +225,8 @@ export const SedesAdmin=(mount,deps={})=>{
     const tds=tr.querySelectorAll('td');
     tds[0].replaceChildren(el('input',{className:'input',value:cur.codigo,style:'max-width:140px'}));
     tds[1].replaceChildren(el('input',{className:'input',value:cur.nombre,style:'max-width:220px'}));
-    tds[2].replaceChildren(el('select',{className:'select'},buildOptions(depList,cur.dependenciaCodigo)));
-    tds[3].replaceChildren(el('select',{className:'select'},buildOptions(zoneList,cur.zonaCodigo)));
+    tds[2].replaceChildren(el('input',{className:'input',list:'sDepList',value:labelByCode(depList,cur.dependenciaCodigo),style:'max-width:260px'}));
+    tds[3].replaceChildren(el('input',{className:'input',list:'sZoneList',value:labelByCode(zoneList,cur.zonaCodigo),style:'max-width:260px'}));
     tds[4].replaceChildren(el('input',{className:'input',value:String(cur.numeroOperarios),style:'max-width:120px',type:'number',min:'0',step:'1',inputMode:'numeric'}));
     tds[5].replaceChildren(statusBadge(s.estado));
     tds[6].textContent=s.createdByEmail||s.createdByUid||'-';
@@ -171,8 +237,8 @@ export const SedesAdmin=(mount,deps={})=>{
     btnSave.addEventListener('click',async()=>{
       const newCode=tds[0].querySelector('input').value.trim();
       const newName=tds[1].querySelector('input').value.trim();
-      const newDepCode=tds[2].querySelector('select').value;
-      const newZoneCode=tds[3].querySelector('select').value;
+      const newDepCode=resolveCode(depList, tds[2].querySelector('input').value);
+      const newZoneCode=resolveCode(zoneList, tds[3].querySelector('input').value);
       const newOpsRaw=tds[4].querySelector('input').value.trim();
       if(!newCode||!newName) return alert('Completa codigo y nombre.');
       if(!newDepCode||!newZoneCode) return alert('Selecciona dependencia y zona.');
@@ -197,9 +263,17 @@ export const SedesAdmin=(mount,deps={})=>{
     btnCancel.addEventListener('click',()=> render());
     box.append(btnSave,btnCancel); tds[8].replaceChildren(box);
   }
-  const un=deps.streamSedes?.((arr)=>{ snapshot=arr||[]; render(); });
   qs('#txtSearch',ui).addEventListener('input',render);
   qs('#selStatus',ui).addEventListener('change',render);
+  initSorting();
   mount.replaceChildren(ui);
+  let un=()=>{};
+  try{
+    unDeps=deps.streamDependencies?.((arr)=>{ depList=(arr||[]).filter(d=>d.estado!=='inactivo'); renderSelects(); render(); }) || (()=>{});
+    unZones=deps.streamZones?.((arr)=>{ zoneList=(arr||[]).filter(z=>z.estado!=='inactivo'); renderSelects(); render(); }) || (()=>{});
+    un=deps.streamSedes?.((arr)=>{ snapshot=arr||[]; render(); }) || (()=>{});
+  }catch(e){
+    const msg=qs('#msg',ui); if(msg) msg.textContent='Error cargando sedes: '+(e?.message||e);
+  }
   return ()=>{ un?.(); unDeps?.(); unZones?.(); };
 };

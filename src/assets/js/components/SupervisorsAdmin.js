@@ -26,14 +26,14 @@ export const SupervisorsAdmin=(mount,deps={})=>{
       el('div',{className:'mt-2 table-wrap'},[
         el('table',{className:'table',id:'tbl'},[
           el('thead',{},[ el('tr',{},[
-            el('th',{},['Codigo']),
-            el('th',{},['Documento']),
-            el('th',{},['Nombre']),
-            el('th',{},['Zona']),
-            el('th',{},['Estado']),
-            el('th',{},['Ingreso']),
-            el('th',{},['Retiro']),
-            el('th',{},['Modificado por']),
+            el('th',{'data-sort':'codigo',style:'cursor:pointer'},['Codigo']),
+            el('th',{'data-sort':'documento',style:'cursor:pointer'},['Documento']),
+            el('th',{'data-sort':'nombre',style:'cursor:pointer'},['Nombre']),
+            el('th',{'data-sort':'zonaNombre',style:'cursor:pointer'},['Zona']),
+            el('th',{'data-sort':'estado',style:'cursor:pointer'},['Estado']),
+            el('th',{'data-sort':'fechaIngreso',style:'cursor:pointer'},['Ingreso']),
+            el('th',{'data-sort':'fechaRetiro',style:'cursor:pointer'},['Retiro']),
+            el('th',{'data-sort':'lastModifiedByEmail',style:'cursor:pointer'},['Modificado por']),
             el('th',{},['Acciones'])
           ]) ]),
           el('tbody',{})
@@ -71,7 +71,9 @@ export const SupervisorsAdmin=(mount,deps={})=>{
     const cur=zoneSelect.value;
     zoneSelect.replaceChildren(...buildOptions(zoneList,cur));
   }
-  const unZones=deps.streamZones?.((arr)=>{ zoneList=(arr||[]).filter(z=>z.estado!=='inactivo'); renderZoneSelect(); render(); });
+  let snapshot=[]; const tbody=ui.querySelector('tbody');
+  let sortKey=''; let sortDir=1;
+  let unZones=()=>{};
   const zoneNameByCode=(code)=> zoneList.find(z=>z.codigo===code)?.nombre || '-';
 
   qs('#btnCreate',ui).addEventListener('click',async()=>{
@@ -103,16 +105,22 @@ export const SupervisorsAdmin=(mount,deps={})=>{
     }catch(e){ msg.textContent='Error: '+(e?.message||e); }
   });
 
-  let snapshot=[]; const tbody=ui.querySelector('tbody');
   const search=()=> qs('#txtSearch',ui).value.trim().toLowerCase();
   const filterStatus=()=> qs('#selStatus',ui).value;
+  function toDate(ts){ try{ const d=ts?.toDate? ts.toDate(): (ts? new Date(ts): null); return d? d.getTime():0; }catch{ return 0; } }
+  function sortVal(s,key){ if(key==='zonaNombre') return (s.zonaNombre||zoneNameByCode(s.zonaCodigo)||'').toLowerCase(); if(key==='fechaIngreso'||key==='fechaRetiro') return toDate(s[key]); return String(s[key]??'').toLowerCase(); }
+  function sortData(data){ if(!sortKey) return data; const out=[...data]; out.sort((a,b)=>{ const va=sortVal(a,sortKey); const vb=sortVal(b,sortKey); if(va===vb) return 0; return va>vb?sortDir:-sortDir; }); return out; }
+  function updateSortIndicators(){ ui.querySelectorAll('th[data-sort]').forEach((th)=>{ const base=th.dataset.baseLabel||th.textContent.replace(/\s[\^v]$/,''); th.dataset.baseLabel=base; const key=th.getAttribute('data-sort'); th.textContent=(sortKey===key)?`${base} ${sortDir===1?'^':'v'}`:base; }); }
+  function initSorting(){ ui.querySelectorAll('th[data-sort]').forEach((th)=> th.addEventListener('click',()=>{ const key=th.getAttribute('data-sort'); if(sortKey===key) sortDir=sortDir*-1; else { sortKey=key; sortDir=1; } render(); })); }
   function render(){
     const term=search(); const st=filterStatus();
     const data=snapshot.filter(s=>{
       const text=[s.codigo,s.documento,s.nombre,s.zonaNombre,zoneNameByCode(s.zonaCodigo)].join(' ').toLowerCase();
       return (!term || text.includes(term)) && (!st || s.estado===st);
     });
-    tbody.replaceChildren(...data.map(s=> row(s)));
+    tbody.replaceChildren(...sortData(data).map(s=> row(s)));
+    const msg=qs('#msg',ui); if(msg) msg.textContent=`Total registros filtrados: ${data.length}`;
+    updateSortIndicators();
   }
   function row(s){
     const tr=el('tr',{'data-id':s.id});
@@ -203,9 +211,11 @@ export const SupervisorsAdmin=(mount,deps={})=>{
       return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
     }catch{ return ''; }
   }
+  unZones=deps.streamZones?.((arr)=>{ zoneList=(arr||[]).filter(z=>z.estado!=='inactivo'); renderZoneSelect(); render(); }) || (()=>{});
   const un=deps.streamSupervisors?.((arr)=>{ snapshot=arr||[]; render(); });
   qs('#txtSearch',ui).addEventListener('input',render);
   qs('#selStatus',ui).addEventListener('change',render);
+  initSorting();
   mount.replaceChildren(ui);
   return ()=>{ un?.(); unZones?.(); };
 };

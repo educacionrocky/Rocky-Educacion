@@ -13,11 +13,12 @@ export const EmployeesAdmin=(mount,deps={})=>{
         el('div',{},[ el('label',{className:'label'},['Nombre completo']), el('input',{id:'eName',className:'input',placeholder:'Nombre completo'}) ]),
         el('div',{},[ el('label',{className:'label'},['Telefono']), el('input',{id:'ePhone',className:'input',placeholder:'Telefono'}) ]),
         el('div',{},[ el('label',{className:'label'},['Cargo']), el('select',{id:'eCargo',className:'select'},[]) ]),
-        el('div',{},[ el('label',{className:'label'},['Sede']), el('select',{id:'eSede',className:'select'},[]) ]),
+        el('div',{},[ el('label',{className:'label'},['Sede (buscar)']), el('input',{id:'eSedeSearch',className:'input',list:'eSedeList',placeholder:'Nombre o codigo de sede'}) ]),
         el('div',{},[ el('label',{className:'label'},['Fecha ingreso']), el('input',{id:'eIngreso',className:'input',type:'date'}) ]),
         el('button',{id:'btnCreate',className:'btn btn--primary'},['Crear empleado']),
         el('span',{id:'msgCreate',className:'text-muted'},[' '])
-      ])
+      ]),
+      el('datalist',{id:'eSedeList'},[])
     ]),
     el('div',{id:'tabList'},[
       el('div',{className:'form-row'},[
@@ -28,16 +29,16 @@ export const EmployeesAdmin=(mount,deps={})=>{
       el('div',{className:'mt-2 table-wrap'},[
         el('table',{className:'table',id:'tbl'},[
           el('thead',{},[ el('tr',{},[
-            el('th',{},['Codigo']),
-            el('th',{},['Documento']),
-            el('th',{},['Nombre']),
-            el('th',{},['Telefono']),
-            el('th',{},['Cargo']),
-            el('th',{},['Sede']),
-            el('th',{},['Estado']),
-            el('th',{},['Ingreso']),
-            el('th',{},['Retiro']),
-            el('th',{},['Modificado por']),
+            el('th',{'data-sort':'codigo',style:'cursor:pointer'},['Codigo']),
+            el('th',{'data-sort':'documento',style:'cursor:pointer'},['Documento']),
+            el('th',{'data-sort':'nombre',style:'cursor:pointer'},['Nombre']),
+            el('th',{'data-sort':'telefono',style:'cursor:pointer'},['Telefono']),
+            el('th',{'data-sort':'cargoNombre',style:'cursor:pointer'},['Cargo']),
+            el('th',{'data-sort':'sedeNombre',style:'cursor:pointer'},['Sede']),
+            el('th',{'data-sort':'estado',style:'cursor:pointer'},['Estado']),
+            el('th',{'data-sort':'fechaIngreso',style:'cursor:pointer'},['Ingreso']),
+            el('th',{'data-sort':'fechaRetiro',style:'cursor:pointer'},['Retiro']),
+            el('th',{'data-sort':'lastModifiedByEmail',style:'cursor:pointer'},['Modificado por']),
             el('th',{},['Acciones'])
           ]) ]),
           el('tbody',{})
@@ -62,7 +63,7 @@ export const EmployeesAdmin=(mount,deps={})=>{
   tabListBtn.addEventListener('click',()=> setTab('list'));
 
   let sedeList=[]; let cargoList=[];
-  const sedeSelect=qs('#eSede',ui); const cargoSelect=qs('#eCargo',ui);
+  const sedeInput=qs('#eSedeSearch',ui); const sedeListNode=qs('#eSedeList',ui); const cargoSelect=qs('#eCargo',ui);
   function buildOptions(items, selected){
     const opts=[ el('option',{value:''},['Seleccione...']) ];
     items.forEach((item)=>{
@@ -71,16 +72,39 @@ export const EmployeesAdmin=(mount,deps={})=>{
     });
     return opts;
   }
+  function sedeLabelByCode(code){
+    const sede=sedeList.find(s=>s.codigo===code);
+    return sede ? `${sede.nombre||sede.codigo} (${sede.codigo||'-'})` : '';
+  }
   function renderSedeSelect(){
-    const cur=sedeSelect.value;
-    sedeSelect.replaceChildren(...buildOptions(sedeList,cur));
+    const opts=sedeList
+      .map((s)=> sedeLabelByCode(s.codigo))
+      .filter((v, i, arr)=> v && arr.indexOf(v)===i)
+      .map((value)=> el('option',{value}));
+    sedeListNode.replaceChildren(...opts);
+  }
+  function resolveSedeCode(inputValue){
+    const raw=String(inputValue||'').trim();
+    if(!raw) return '';
+    const byCode=sedeList.find(s=> String(s.codigo||'').toLowerCase()===raw.toLowerCase());
+    if(byCode) return byCode.codigo;
+    const match=raw.match(/\(([^)]+)\)\s*$/);
+    if(match){
+      const code=match[1].trim();
+      const byLabelCode=sedeList.find(s=> String(s.codigo||'').toLowerCase()===code.toLowerCase());
+      if(byLabelCode) return byLabelCode.codigo;
+    }
+    const byName=sedeList.find(s=> String(s.nombre||'').toLowerCase()===raw.toLowerCase());
+    return byName?.codigo||'';
   }
   function renderCargoSelect(){
     const cur=cargoSelect.value;
     cargoSelect.replaceChildren(...buildOptions(cargoList,cur));
   }
-  const unSedes=deps.streamSedes?.((arr)=>{ sedeList=(arr||[]).filter(s=>s.estado!=='inactivo'); renderSedeSelect(); render(); });
-  const unCargos=deps.streamCargos?.((arr)=>{ cargoList=(arr||[]).filter(c=>c.estado!=='inactivo'); renderCargoSelect(); render(); });
+  let snapshot=[]; const tbody=ui.querySelector('tbody');
+  let sortKey=''; let sortDir=1;
+  let unSedes=()=>{};
+  let unCargos=()=>{};
   const sedeNameByCode=(code)=> sedeList.find(s=>s.codigo===code)?.nombre || '-';
   const cargoNameByCode=(code)=> cargoList.find(c=>c.codigo===code)?.nombre || '-';
 
@@ -89,7 +113,7 @@ export const EmployeesAdmin=(mount,deps={})=>{
     const name=qs('#eName',ui).value.trim();
     const phone=qs('#ePhone',ui).value.trim();
     const cargoCode=qs('#eCargo',ui).value;
-    const sedeCode=qs('#eSede',ui).value;
+    const sedeCode=resolveSedeCode(sedeInput.value);
     const ingreso=qs('#eIngreso',ui).value;
     const msg=qs('#msgCreate',ui); msg.textContent=' ';
     if(!doc){ msg.textContent='Escribe el documento.'; return; }
@@ -116,21 +140,61 @@ export const EmployeesAdmin=(mount,deps={})=>{
         fechaIngreso: new Date(`${ingreso}T00:00:00`)
       });
       await deps.addAuditLog?.({ targetType:'employee', targetId:id, action:'create_employee', after:{ codigo:code, documento:doc, nombre:name, sedeCodigo:sedeCode, estado:'activo' } });
-      qs('#eDoc',ui).value=''; qs('#eName',ui).value=''; qs('#ePhone',ui).value=''; qs('#eIngreso',ui).value=''; renderCargoSelect(); renderSedeSelect();
+      qs('#eDoc',ui).value=''; qs('#eName',ui).value=''; qs('#ePhone',ui).value=''; qs('#eIngreso',ui).value=''; sedeInput.value=''; renderCargoSelect(); renderSedeSelect();
       msg.textContent='Empleado creado OK'; setTab('list'); setTimeout(()=> msg.textContent=' ',1200);
     }catch(e){ msg.textContent='Error: '+(e?.message||e); }
   });
 
-  let snapshot=[]; const tbody=ui.querySelector('tbody');
   const search=()=> qs('#txtSearch',ui).value.trim().toLowerCase();
   const filterStatus=()=> qs('#selStatus',ui).value;
+  function toSortableDate(ts){
+    try{
+      const d=ts?.toDate? ts.toDate(): (ts? new Date(ts): null);
+      return d? d.getTime(): 0;
+    }catch{ return 0; }
+  }
+  function getSortValue(e,key){
+    if(key==='cargoNombre') return (e.cargoNombre||cargoNameByCode(e.cargoCodigo)||'').toLowerCase();
+    if(key==='sedeNombre') return (e.sedeNombre||sedeNameByCode(e.sedeCodigo)||'').toLowerCase();
+    if(key==='fechaIngreso' || key==='fechaRetiro') return toSortableDate(e[key]);
+    return String(e[key]??'').toLowerCase();
+  }
+  function sortData(data){
+    if(!sortKey) return data;
+    const out=[...data];
+    out.sort((a,b)=>{
+      const va=getSortValue(a,sortKey); const vb=getSortValue(b,sortKey);
+      if(va===vb) return 0;
+      return va>vb ? sortDir : -sortDir;
+    });
+    return out;
+  }
+  function updateSortIndicators(){
+    ui.querySelectorAll('th[data-sort]').forEach((th)=>{
+      const base=th.dataset.baseLabel||th.textContent.replace(/\s[\^v]$/,'');
+      th.dataset.baseLabel=base;
+      const key=th.getAttribute('data-sort');
+      th.textContent=(sortKey===key)?`${base} ${sortDir===1?'^':'v'}`:base;
+    });
+  }
+  function initSorting(){
+    ui.querySelectorAll('th[data-sort]').forEach((th)=>{
+      th.addEventListener('click',()=>{
+        const key=th.getAttribute('data-sort');
+        if(sortKey===key) sortDir=sortDir*-1; else { sortKey=key; sortDir=1; }
+        render();
+      });
+    });
+  }
   function render(){
     const term=search(); const st=filterStatus();
     const data=snapshot.filter(e=>{
       const text=[e.codigo,e.documento,e.nombre,e.cargoNombre,cargoNameByCode(e.cargoCodigo),e.sedeNombre,sedeNameByCode(e.sedeCodigo)].join(' ').toLowerCase();
       return (!term || text.includes(term)) && (!st || e.estado===st);
     });
-    tbody.replaceChildren(...data.map(e=> row(e)));
+    tbody.replaceChildren(...sortData(data).map(e=> row(e)));
+    const msg=qs('#msg',ui); if(msg) msg.textContent=`Total registros filtrados: ${data.length}`;
+    updateSortIndicators();
   }
   function row(e){
     const tr=el('tr',{'data-id':e.id});
@@ -184,7 +248,7 @@ export const EmployeesAdmin=(mount,deps={})=>{
     tds[2].replaceChildren(el('input',{className:'input',value:cur.nombre,style:'max-width:220px'}));
     tds[3].replaceChildren(el('input',{className:'input',value:cur.telefono,style:'max-width:140px'}));
     tds[4].replaceChildren(el('select',{className:'select'},buildOptions(cargoList,cur.cargoCodigo)));
-    tds[5].replaceChildren(el('select',{className:'select'},buildOptions(sedeList,cur.sedeCodigo)));
+    tds[5].replaceChildren(el('input',{className:'input',list:'eSedeList',value:sedeLabelByCode(cur.sedeCodigo),style:'max-width:240px'}));
     tds[6].replaceChildren(statusBadge(e.estado));
     tds[7].replaceChildren(el('input',{className:'input',type:'date',value:cur.fechaIngreso||''}));
     tds[8].textContent=formatDate(e.fechaRetiro);
@@ -198,7 +262,7 @@ export const EmployeesAdmin=(mount,deps={})=>{
       const newName=tds[2].querySelector('input').value.trim();
       const newPhone=tds[3].querySelector('input').value.trim();
       const newCargoCode=tds[4].querySelector('select').value;
-      const newSedeCode=tds[5].querySelector('select').value;
+      const newSedeCode=resolveSedeCode(tds[5].querySelector('input').value);
       const newIngreso=tds[7].querySelector('input').value.trim();
       if(!newCode||!newDoc||!newName||!newPhone) return alert('Completa codigo, documento, nombre y telefono.');
       if(!newCargoCode) return alert('Selecciona un cargo.');
@@ -234,9 +298,17 @@ export const EmployeesAdmin=(mount,deps={})=>{
       return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
     }catch{ return ''; }
   }
-  const un=deps.streamEmployees?.((arr)=>{ snapshot=arr||[]; render(); });
   qs('#txtSearch',ui).addEventListener('input',render);
   qs('#selStatus',ui).addEventListener('change',render);
+  initSorting();
   mount.replaceChildren(ui);
+  let un=()=>{};
+  try{
+    unSedes=deps.streamSedes?.((arr)=>{ sedeList=(arr||[]).filter(s=>s.estado!=='inactivo'); renderSedeSelect(); render(); }) || (()=>{});
+    unCargos=deps.streamCargos?.((arr)=>{ cargoList=(arr||[]).filter(c=>c.estado!=='inactivo'); renderCargoSelect(); render(); }) || (()=>{});
+    un=deps.streamEmployees?.((arr)=>{ snapshot=arr||[]; render(); }) || (()=>{});
+  }catch(e){
+    const msg=qs('#msg',ui); if(msg) msg.textContent='Error cargando empleados: '+(e?.message||e);
+  }
   return ()=>{ un?.(); unSedes?.(); unCargos?.(); };
 };

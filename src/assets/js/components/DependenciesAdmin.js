@@ -22,7 +22,7 @@ export const DependenciesAdmin=(mount,deps={})=>{
       ]),
       el('div',{className:'mt-2 table-wrap'},[
         el('table',{className:'table',id:'tbl'},[
-          el('thead',{},[ el('tr',{},[ el('th',{},['Codigo']), el('th',{},['Nombre']), el('th',{},['Estado']), el('th',{},['Creado por']), el('th',{},['Creacion']), el('th',{},['Acciones']) ]) ]),
+          el('thead',{},[ el('tr',{},[ el('th',{'data-sort':'codigo',style:'cursor:pointer'},['Codigo']), el('th',{'data-sort':'nombre',style:'cursor:pointer'},['Nombre']), el('th',{'data-sort':'estado',style:'cursor:pointer'},['Estado']), el('th',{'data-sort':'createdByEmail',style:'cursor:pointer'},['Creado por']), el('th',{'data-sort':'createdAt',style:'cursor:pointer'},['Creacion']), el('th',{},['Acciones']) ]) ]),
           el('tbody',{})
         ])
       ]),
@@ -55,9 +55,14 @@ export const DependenciesAdmin=(mount,deps={})=>{
     }catch(e){ msg.textContent='Error: '+(e?.message||e); }
   });
   let snapshot=[]; const tbody=ui.querySelector('tbody');
+  let sortKey=''; let sortDir=1;
   const search=()=> qs('#txtSearch',ui).value.trim().toLowerCase();
   const filterStatus=()=> qs('#selStatus',ui).value;
-  function render(){ const term=search(); const st=filterStatus(); const data=snapshot.filter(d=> ((!term||(d.codigo||'').toLowerCase().includes(term)||(d.nombre||'').toLowerCase().includes(term)) && (!st || d.estado===st))); tbody.replaceChildren(...data.map(d=> row(d))); }
+  function sortVal(d,key){ if(key==='createdAt'){ try{ const x=d.createdAt?.toDate?d.createdAt.toDate(): (d.createdAt?new Date(d.createdAt):null); return x?x.getTime():0; }catch{return 0;} } return String(d[key]??'').toLowerCase(); }
+  function sortData(data){ if(!sortKey) return data; const out=[...data]; out.sort((a,b)=>{ const va=sortVal(a,sortKey); const vb=sortVal(b,sortKey); if(va===vb) return 0; return va>vb?sortDir:-sortDir; }); return out; }
+  function updateSortIndicators(){ ui.querySelectorAll('th[data-sort]').forEach((th)=>{ const base=th.dataset.baseLabel||th.textContent.replace(/\s[\^v]$/,''); th.dataset.baseLabel=base; const key=th.getAttribute('data-sort'); th.textContent=(sortKey===key)?`${base} ${sortDir===1?'^':'v'}`:base; }); }
+  function initSorting(){ ui.querySelectorAll('th[data-sort]').forEach((th)=> th.addEventListener('click',()=>{ const key=th.getAttribute('data-sort'); if(sortKey===key) sortDir=sortDir*-1; else { sortKey=key; sortDir=1; } render(); })); }
+  function render(){ const term=search(); const st=filterStatus(); const data=snapshot.filter(d=> ((!term||(d.codigo||'').toLowerCase().includes(term)||(d.nombre||'').toLowerCase().includes(term)) && (!st || d.estado===st))); tbody.replaceChildren(...sortData(data).map(d=> row(d))); const msg=qs('#msg',ui); if(msg) msg.textContent=`Total registros filtrados: ${data.length}`; updateSortIndicators(); }
   function row(d){ const tr=el('tr',{'data-id':d.id}); const tdCodigo=el('td',{},[d.codigo||'-']); const tdNombre=el('td',{},[d.nombre||'-']); const tdEstado=el('td',{},[ statusBadge(d.estado) ]); const tdActor=el('td',{},[ d.createdByEmail||d.createdByUid||'-' ]); const tdFecha=el('td',{},[ formatDate(d.createdAt) ]); const tdAcc=el('td',{},[ actionsCell(d) ]); tr.addEventListener('dblclick',()=> startEdit(tr,d)); tr.append(tdCodigo,tdNombre,tdEstado,tdActor,tdFecha,tdAcc); return tr; }
   function statusBadge(st){ return el('span',{className:'badge '+(st==='activo'?'badge--ok':'badge--off')},[st||'-']); }
   function formatDate(ts){ try{ const d=ts?.toDate? ts.toDate(): (ts? new Date(ts): null); return d? new Date(d).toLocaleString(): '-'; }catch{ return '-'; } }
@@ -66,5 +71,6 @@ export const DependenciesAdmin=(mount,deps={})=>{
     const box=el('div',{className:'row-actions'},[]); const btnSave=el('button',{className:'btn btn--primary'},['Guardar']); const btnCancel=el('button',{className:'btn'},['Cancelar']); btnSave.addEventListener('click',async()=>{ const newCode=tds[0].querySelector('input').value.trim(); const newName=tds[1].querySelector('input').value.trim(); if(!newCode||!newName) return alert('Completa codigo y nombre.'); try{ if(newCode!==d.codigo){ const dup=await deps.findDependencyByCode?.(newCode); if(dup && dup.id!==d.id) return alert('Ya existe una dependencia con ese codigo.'); } await deps.updateDependency?.(d.id,{ codigo:newCode, nombre:newName }); await deps.addAuditLog?.({ targetType:'dependency', targetId:d.id, action:'update_dependency', before:{ codigo:d.codigo, nombre:d.nombre }, after:{ codigo:newCode, nombre:newName } }); }catch(e){ alert('Error: '+(e?.message||e)); } }); btnCancel.addEventListener('click',()=> render()); box.append(btnSave,btnCancel); tds[5].replaceChildren(box); }
   const un=deps.streamDependencies?.((arr)=>{ snapshot=arr||[]; render(); });
   qs('#txtSearch',ui).addEventListener('input',render); qs('#selStatus',ui).addEventListener('change',render);
+  initSorting();
   mount.replaceChildren(ui); return ()=> un?.();
 };
