@@ -48,3 +48,13 @@
 .divider{height:1px;background:var(--color-border);margin:.75rem 0}
 .link{color:var(--color-primary);cursor:pointer}
 .right{margin-left:auto}
+
+/* Import sections */
+.section-block{margin-top:.9rem;padding:.85rem;border:1px solid var(--color-border);border-radius:10px;background:var(--color-surface)}
+.section-title{margin:0 0 .55rem 0;font-size:.95rem;color:var(--color-fg)}
+.section-title--toggle{display:flex;align-items:center;justify-content:space-between;gap:.5rem;cursor:pointer;user-select:none}
+.section-title--toggle::after{content:'▾';font-size:.9rem;color:var(--color-muted);transition:transform .15s ease}
+.section-title--toggle:focus{outline:2px solid var(--color-primary);outline-offset:2px;border-radius:6px}
+.section-content{display:block}
+.section-block.is-collapsed .section-content{display:none}
+.section-block.is-collapsed .section-title--toggle::after{transform:rotate(-90deg)}

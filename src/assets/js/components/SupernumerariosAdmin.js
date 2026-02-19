@@ -1,7 +1,7 @@
 import { el, qs } from '../utils/dom.js';
-export const EmployeesAdmin=(mount,deps={})=>{
+export const SupernumerariosAdmin=(mount,deps={})=>{
   const ui=el('section',{className:'main-card'},[
-    el('h2',{},['Empleados']),
+    el('h2',{},['Supernumerarios']),
     el('div',{className:'tabs mt-2'},[
       el('button',{id:'tabCreateBtn',className:'tab',type:'button'},['Crear']),
       el('button',{id:'tabListBtn',className:'tab is-active',type:'button'},['Consultar'])
@@ -9,13 +9,13 @@ export const EmployeesAdmin=(mount,deps={})=>{
     el('div',{id:'tabCreate',className:'hidden'},[
       el('div',{className:'form-row mt-2'},[
         el('div',{},[ el('label',{className:'label'},['Codigo (automatico)']), el('input',{id:'eCode',className:'input',placeholder:'Se generara al crear',disabled:true}) ]),
-        el('div',{},[ el('label',{className:'label'},['Documento']), el('input',{id:'eDoc',className:'input',placeholder:'Documento del empleado'}) ]),
+        el('div',{},[ el('label',{className:'label'},['Documento']), el('input',{id:'eDoc',className:'input',placeholder:'Documento del supernumerario'}) ]),
         el('div',{},[ el('label',{className:'label'},['Nombre completo']), el('input',{id:'eName',className:'input',placeholder:'Nombre completo'}) ]),
         el('div',{},[ el('label',{className:'label'},['Telefono']), el('input',{id:'ePhone',className:'input',placeholder:'Telefono'}) ]),
         el('div',{},[ el('label',{className:'label'},['Cargo']), el('select',{id:'eCargo',className:'select'},[]) ]),
         el('div',{},[ el('label',{className:'label'},['Sede (buscar)']), el('input',{id:'eSedeSearch',className:'input',list:'eSedeList',placeholder:'Nombre o codigo de sede'}) ]),
         el('div',{},[ el('label',{className:'label'},['Fecha ingreso']), el('input',{id:'eIngreso',className:'input',type:'date'}) ]),
-        el('button',{id:'btnCreate',className:'btn btn--primary'},['Crear empleado']),
+        el('button',{id:'btnCreate',className:'btn btn--primary'},['Crear supernumerario']),
         el('span',{id:'msgCreate',className:'text-muted'},[' '])
       ]),
       el('datalist',{id:'eSedeList'},[])
@@ -105,17 +105,14 @@ export const EmployeesAdmin=(mount,deps={})=>{
   let sortKey=''; let sortDir=1;
   let unSedes=()=>{};
   let unCargos=()=>{};
-  let unSup=()=>{};
-  let unSupn=()=>{};
-  let supervisors=[]; let supernumerarios=[];
+  let unEmp=()=>{};
+  let employees=[];
   const sedeNameByCode=(code)=> sedeList.find(s=>s.codigo===code)?.nombre || '-';
   const cargoNameByCode=(code)=> cargoList.find(c=>c.codigo===code)?.nombre || '-';
   const isLinkedByDoc=(doc)=>{
     const d=String(doc||'').trim();
     if(!d) return false;
-    const inSup=supervisors.some((s)=> s.estado!=='inactivo' && String(s.documento||'').trim()===d);
-    const inSupn=supernumerarios.some((s)=> s.estado!=='inactivo' && String(s.documento||'').trim()===d);
-    return inSup || inSupn;
+    return employees.some((e)=> e.estado!=='inactivo' && String(e.documento||'').trim()===d);
   };
 
   qs('#btnCreate',ui).addEventListener('click',async()=>{
@@ -133,12 +130,12 @@ export const EmployeesAdmin=(mount,deps={})=>{
     if(!sedeCode){ msg.textContent='Selecciona una sede.'; return; }
     if(!ingreso){ msg.textContent='Selecciona la fecha de ingreso.'; return; }
     try{
-      const dupDoc=await deps.findEmployeeByDocument?.(doc);
-      if(dupDoc) { msg.textContent='Ya existe un empleado con ese documento.'; return; }
-      const code=await deps.getNextEmployeeCode?.();
+      const dupDoc=await deps.findSupernumerarioByDocument?.(doc);
+      if(dupDoc) { msg.textContent='Ya existe un supernumerario con ese documento.'; return; }
+      const code=await deps.getNextSupernumerarioCode?.();
       const cargo=cargoList.find(c=>c.codigo===cargoCode);
       const sede=sedeList.find(s=>s.codigo===sedeCode);
-      const id=await deps.createEmployee?.({
+      const id=await deps.createSupernumerario?.({
         codigo:code,
         documento:doc,
         nombre:name,
@@ -149,9 +146,9 @@ export const EmployeesAdmin=(mount,deps={})=>{
         sedeNombre:sede?.nombre||null,
         fechaIngreso: new Date(`${ingreso}T00:00:00`)
       });
-      await deps.addAuditLog?.({ targetType:'employee', targetId:id, action:'create_employee', after:{ codigo:code, documento:doc, nombre:name, sedeCodigo:sedeCode, estado:'activo' } });
+      await deps.addAuditLog?.({ targetType:'supernumerario', targetId:id, action:'create_supernumerario', after:{ codigo:code, documento:doc, nombre:name, sedeCodigo:sedeCode, estado:'activo' } });
       qs('#eDoc',ui).value=''; qs('#eName',ui).value=''; qs('#ePhone',ui).value=''; qs('#eIngreso',ui).value=''; sedeInput.value=''; renderCargoSelect(); renderSedeSelect();
-      msg.textContent='Empleado creado OK'; setTab('list'); setTimeout(()=> msg.textContent=' ',1200);
+      msg.textContent='Supernumerario creado OK'; setTab('list'); setTimeout(()=> msg.textContent=' ',1200);
     }catch(e){ msg.textContent='Error: '+(e?.message||e); }
   });
 
@@ -238,9 +235,11 @@ export const EmployeesAdmin=(mount,deps={})=>{
     const btnToggle=el('button',{className:'btn '+(e.estado==='activo'?'btn--danger':'' )},[ e.estado==='activo'?'Desactivar':'Activar' ]);
     btnToggle.addEventListener('click',async()=>{
       const target=e.estado==='activo'?'inactivo':'activo';
-      if(!window.confirm(`${e.estado==='activo'?'Desactivar':'Activar'} empleado "${e.nombre}"?`)) return;
+      if(!window.confirm(`${e.estado==='activo'?'Desactivar':'Activar'} supernumerario "${e.nombre}"?`)) return;
       try{
         let retiroDate=null;
+        let motivoEstado=null;
+        let syncEmployee=true;
         if(target==='inactivo'){
           const suggested=toInputDate(new Date()) || '';
           const retiroInput=window.prompt('Fecha de retiro (AAAA-MM-DD):', suggested);
@@ -249,9 +248,23 @@ export const EmployeesAdmin=(mount,deps={})=>{
           if(!/^\d{4}-\d{2}-\d{2}$/.test(retiro)) return alert('Fecha invalida. Usa formato AAAA-MM-DD.');
           retiroDate=new Date(`${retiro}T00:00:00`);
           if(Number.isNaN(retiroDate.getTime())) return alert('Fecha invalida.');
+
+          const motivoInput=window.prompt('Motivo: T=Traslado a Empleado, R=Retiro', 'T');
+          if(motivoInput===null) return;
+          const motivoNorm=String(motivoInput||'').trim().toUpperCase();
+          if(motivoNorm!=='T' && motivoNorm!=='R') return alert('Motivo invalido. Usa T o R.');
+          motivoEstado = motivoNorm==='T' ? 'traslado_empleado' : 'retiro';
+          // En traslado se mantiene el registro de empleados sin inactivarlo.
+          syncEmployee = motivoEstado!=='traslado_empleado';
         }
-        await deps.setEmployeeStatus?.(e.id,target,retiroDate);
-        await deps.addAuditLog?.({ targetType:'employee', targetId:e.id, action: target==='activo'?'activate_employee':'deactivate_employee', before:{estado:e.estado, fechaRetiro:e.fechaRetiro||null}, after:{estado:target, fechaRetiro:retiroDate||null} });
+        await deps.setSupernumerarioStatus?.(e.id,target,retiroDate,{ syncEmployee, motivoEstado });
+        await deps.addAuditLog?.({
+          targetType:'supernumerario',
+          targetId:e.id,
+          action: target==='activo'?'activate_supernumerario':'deactivate_supernumerario',
+          before:{estado:e.estado, fechaRetiro:e.fechaRetiro||null, motivoEstado:e.motivoEstado||null},
+          after:{estado:target, fechaRetiro:retiroDate||null, motivoEstado:motivoEstado||null}
+        });
       }catch(err){ alert('Error: '+(err?.message||err)); }
     });
     box.append(btnEdit,btnToggle); return box;
@@ -294,13 +307,13 @@ export const EmployeesAdmin=(mount,deps={})=>{
       if(!newCargoCode) return alert('Selecciona un cargo.');
       if(!newSedeCode) return alert('Selecciona una sede.');
       if(!newIngreso) return alert('Selecciona la fecha de ingreso.');
-      if(e.estado==='inactivo' && !newRetiro) return alert('Para empleados inactivos, la fecha de retiro es obligatoria.');
+      if(e.estado==='inactivo' && !newRetiro) return alert('Para supernumerarios inactivos, la fecha de retiro es obligatoria.');
       try{
-        if(newCode!==e.codigo){ const dup=await deps.findEmployeeByCode?.(newCode); if(dup && dup.id!==e.id) return alert('Ya existe un empleado con ese codigo.'); }
-        if(newDoc!==e.documento){ const dupDoc=await deps.findEmployeeByDocument?.(newDoc); if(dupDoc && dupDoc.id!==e.id) return alert('Ya existe un empleado con ese documento.'); }
+        if(newCode!==e.codigo){ const dup=await deps.findSupernumerarioByCode?.(newCode); if(dup && dup.id!==e.id) return alert('Ya existe un supernumerario con ese codigo.'); }
+        if(newDoc!==e.documento){ const dupDoc=await deps.findSupernumerarioByDocument?.(newDoc); if(dupDoc && dupDoc.id!==e.id) return alert('Ya existe un supernumerario con ese documento.'); }
         const newCargo=cargoList.find(c=>c.codigo===newCargoCode);
         const newSede=sedeList.find(s=>s.codigo===newSedeCode);
-        await deps.updateEmployee?.(e.id,{
+        await deps.updateSupernumerario?.(e.id,{
           codigo:newCode,
           documento:newDoc,
           nombre:newName,
@@ -312,7 +325,7 @@ export const EmployeesAdmin=(mount,deps={})=>{
           fechaIngreso: new Date(`${newIngreso}T00:00:00`),
           fechaRetiro: newRetiro ? new Date(`${newRetiro}T00:00:00`) : null
         });
-        await deps.addAuditLog?.({ targetType:'employee', targetId:e.id, action:'update_employee', before:{ codigo:e.codigo, documento:e.documento, nombre:e.nombre, sedeCodigo:e.sedeCodigo, fechaRetiro:e.fechaRetiro||null }, after:{ codigo:newCode, documento:newDoc, nombre:newName, sedeCodigo:newSedeCode, fechaRetiro:newRetiro||null } });
+        await deps.addAuditLog?.({ targetType:'supernumerario', targetId:e.id, action:'update_supernumerario', before:{ codigo:e.codigo, documento:e.documento, nombre:e.nombre, sedeCodigo:e.sedeCodigo, fechaRetiro:e.fechaRetiro||null }, after:{ codigo:newCode, documento:newDoc, nombre:newName, sedeCodigo:newSedeCode, fechaRetiro:newRetiro||null } });
       }catch(err){ alert('Error: '+(err?.message||err)); }
     });
     btnCancel.addEventListener('click',()=> render());
@@ -334,11 +347,11 @@ export const EmployeesAdmin=(mount,deps={})=>{
   try{
     unSedes=deps.streamSedes?.((arr)=>{ sedeList=(arr||[]).filter(s=>s.estado!=='inactivo'); renderSedeSelect(); render(); }) || (()=>{});
     unCargos=deps.streamCargos?.((arr)=>{ cargoList=(arr||[]).filter(c=>c.estado!=='inactivo'); renderCargoSelect(); render(); }) || (()=>{});
-    unSup=deps.streamSupervisors?.((arr)=>{ supervisors=arr||[]; render(); }) || (()=>{});
-    unSupn=deps.streamSupernumerarios?.((arr)=>{ supernumerarios=arr||[]; render(); }) || (()=>{});
-    un=deps.streamEmployees?.((arr)=>{ snapshot=arr||[]; render(); }) || (()=>{});
+    unEmp=deps.streamEmployees?.((arr)=>{ employees=arr||[]; render(); }) || (()=>{});
+    un=deps.streamSupernumerarios?.((arr)=>{ snapshot=arr||[]; render(); }) || (()=>{});
   }catch(e){
-    const msg=qs('#msg',ui); if(msg) msg.textContent='Error cargando empleados: '+(e?.message||e);
+    const msg=qs('#msg',ui); if(msg) msg.textContent='Error cargando supernumerarios: '+(e?.message||e);
   }
-  return ()=>{ un?.(); unSedes?.(); unCargos?.(); unSup?.(); unSupn?.(); };
+  return ()=>{ un?.(); unSedes?.(); unCargos?.(); unEmp?.(); };
 };
+

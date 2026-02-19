@@ -1,13 +1,13 @@
 import { el, qs } from '../utils/dom.js';
 
-export const CargueMasivoSedesAdmin=(mount,deps={})=>{
+export const CargueMasivoSupernumerariosAdmin=(mount,deps={})=>{
   const ui=el('section',{className:'main-card'},[
-    el('h2',{},['Cargue masivo de sedes']),
+    el('h2',{},['Cargue masivo de supernumerarios']),
     el('div',{className:'form-row mt-2'},[
       el('button',{id:'btnTemplate',className:'btn',type:'button'},['Descargar plantilla CSV']),
       el('input',{id:'fileInput',className:'input',type:'file',accept:'.csv,.xls,.xlsx'}),
       el('button',{id:'btnValidate',className:'btn btn--primary'},['Validar archivo']),
-      el('button',{id:'btnImport',className:'btn',disabled:true},['Importar sedes']),
+      el('button',{id:'btnImport',className:'btn',disabled:true},['Importar supernumerarios']),
       el('span',{id:'msg',className:'text-muted'},[' '])
     ]),
     el('div',{className:'divider'}),
@@ -19,13 +19,14 @@ export const CargueMasivoSedesAdmin=(mount,deps={})=>{
     el('div',{className:'mt-2 table-wrap'},[
       el('table',{className:'table',id:'tblPreview'},[
         el('thead',{},[ el('tr',{},[
-          el('th',{},['Nombre sede']),
-          el('th',{},['Dependencia codigo']),
-          el('th',{},['Zona codigo']),
-          el('th',{},['Dependencia']),
-          el('th',{},['Zona']),
-          el('th',{},['Nro operarios']),
-          el('th',{},['Jornada']),
+          el('th',{},['Documento']),
+          el('th',{},['Nombre']),
+          el('th',{},['Telefono']),
+          el('th',{},['Cargo codigo']),
+          el('th',{},['Sede codigo']),
+          el('th',{},['Cargo']),
+          el('th',{},['Sede']),
+          el('th',{},['Fecha ingreso']),
           el('th',{},['Estado'])
         ]) ]),
         el('tbody',{})
@@ -43,12 +44,12 @@ export const CargueMasivoSedesAdmin=(mount,deps={})=>{
   const btnImport=qs('#btnImport',ui);
   const fileInput=qs('#fileInput',ui);
   const btnTemplate=qs('#btnTemplate',ui);
-  let sedes=[]; let depsList=[]; let zones=[];
+  let employees=[]; let cargos=[]; let sedes=[];
   let validRows=[];
 
-  const unSedes=deps.streamSedes?.((arr)=>{ sedes=arr||[]; });
-  const unDeps=deps.streamDependencies?.((arr)=>{ depsList=arr||[]; });
-  const unZones=deps.streamZones?.((arr)=>{ zones=arr||[]; });
+  const unEmp=deps.streamSupernumerarios?.((arr)=>{ employees=arr||[]; });
+  const unCargo=deps.streamCargos?.((arr)=>{ cargos=arr||[]; });
+  const unSede=deps.streamSedes?.((arr)=>{ sedes=arr||[]; });
 
   qs('#btnValidate',ui).addEventListener('click',async()=>{
     msg.textContent='Validando archivo...';
@@ -58,7 +59,7 @@ export const CargueMasivoSedesAdmin=(mount,deps={})=>{
       const file=fileInput.files?.[0];
       if(!file){ msg.textContent='Selecciona un archivo CSV/XLS/XLSX.'; return; }
       const rows=await readInputFile(file);
-      const result=validateRows(rows, sedes, depsList, zones);
+      const result=validateRows(rows, employees, cargos, sedes);
       renderSummary(result.rows.length, result.valid.length, result.errors.length);
       renderPreview(result.preview);
       renderErrors(result.errors);
@@ -73,15 +74,15 @@ export const CargueMasivoSedesAdmin=(mount,deps={})=>{
   btnImport.addEventListener('click',async()=>{
     if(!validRows.length){ msg.textContent='No hay filas validas para importar.'; return; }
     btnImport.disabled=true;
-    msg.textContent='Importando sedes...';
+    msg.textContent='Importando supernumerarios...';
     try{
-      const out=await deps.createSedesBulk?.(validRows);
+      const out=await deps.createSupernumerariosBulk?.(validRows);
       await deps.addAuditLog?.({
-        targetType:'sede',
-        action:'bulk_create_sedes',
+        targetType:'supernumerario',
+        action:'bulk_create_supernumerarios',
         after:{ total: out?.created||validRows.length }
       });
-      msg.textContent=`Importacion completada. Creadas: ${out?.created||validRows.length}`;
+      msg.textContent=`Importacion completada. Creados: ${out?.created||validRows.length}`;
       validRows=[];
     }catch(e){
       msg.textContent='Error al importar: '+(e?.message||e);
@@ -90,9 +91,9 @@ export const CargueMasivoSedesAdmin=(mount,deps={})=>{
   });
 
   btnTemplate.addEventListener('click',()=>{
-    const headers=['nombre sede','dependencia codigo','zona codigo','nro operarios','jornada'];
-    const sample=['Sede Norte','DEP-0001','ZON-0001','12','lun_vie'];
-    downloadCsv('plantilla_sedes.csv',[headers,sample]);
+    const headers=['documento','nombre','telefono','cargo codigo','sede codigo','fecha ingreso'];
+    const sample=['10000001','Supernumerario ejemplo','3000000000','CAR-0001','SED-0001','2026-02-13'];
+    downloadCsv('plantilla_supernumerarios.csv',[headers,sample]);
   });
 
   function renderSummary(total, ok, err){
@@ -104,13 +105,14 @@ export const CargueMasivoSedesAdmin=(mount,deps={})=>{
   function renderPreview(rows){
     const tb=qs('#tblPreview tbody',ui);
     tb.replaceChildren(...rows.map(r=>el('tr',{},[
+      el('td',{},[r.documento||'-']),
       el('td',{},[r.nombre||'-']),
-      el('td',{},[r.dependenciaCodigo||'-']),
-      el('td',{},[r.zonaCodigo||'-']),
-      el('td',{},[r.dependenciaNombre||'-']),
-      el('td',{},[r.zonaNombre||'-']),
-      el('td',{},[String(r.numeroOperarios??'-')]),
-      el('td',{},[r.jornada||'-']),
+      el('td',{},[r.telefono||'-']),
+      el('td',{},[r.cargoCodigo||'-']),
+      el('td',{},[r.sedeCodigo||'-']),
+      el('td',{},[r.cargoNombre||'-']),
+      el('td',{},[r.sedeNombre||'-']),
+      el('td',{},[r.fechaIngreso||'-']),
       el('td',{},[r.ok? 'OK':'ERROR'])
     ])));
   }
@@ -123,52 +125,55 @@ export const CargueMasivoSedesAdmin=(mount,deps={})=>{
     ])));
   }
 
-  function validateRows(rows, sedesList, dependencies, zoneList){
-    const existingNames=new Set((sedesList||[]).map(s=> String(s.nombre||'').trim().toLowerCase()).filter(Boolean));
-    const localNames=new Set();
-    const depByCode=new Map((dependencies||[]).map(d=> [String(d.codigo||'').trim().toLowerCase(), d]));
-    const zoneByCode=new Map((zoneList||[]).map(z=> [String(z.codigo||'').trim().toLowerCase(), z]));
+  function validateRows(rows, employeesList, cargosList, sedesList){
+    const existingDocs=new Set((employeesList||[]).map(e=> String(e.documento||'').trim()).filter(Boolean));
+    const localDocs=new Set();
+    const cargoByCode=new Map((cargosList||[]).map(c=> [String(c.codigo||'').trim().toLowerCase(), c]));
+    const sedeByCode=new Map((sedesList||[]).map(s=> [String(s.codigo||'').trim().toLowerCase(), s]));
     const errors=[]; const valid=[]; const preview=[];
 
     rows.forEach((raw,idx)=>{
       const rowNum=idx+2;
-      const nombre=String(raw.nombre||raw.sede||'').trim();
-      const depCode=String(raw.dependenciaCodigo||raw.dependencia||'').trim().toLowerCase();
-      const zoneCode=String(raw.zonaCodigo||raw.zona||'').trim().toLowerCase();
-      const ops=Number(String(raw.numeroOperarios||raw.operarios||'').trim());
-      const jornada=String(raw.jornada||raw.horario||'lun_vie').trim().toLowerCase();
+      const documento=String(raw.documento||'').trim();
+      const nombre=String(raw.nombre||'').trim();
+      const telefono=String(raw.telefono||'').trim();
+      const cargoCode=String(raw.cargoCodigo||raw.cargo||'').trim().toLowerCase();
+      const sedeCode=String(raw.sedeCodigo||raw.sede||'').trim().toLowerCase();
+      const fechaIngreso=normalizeDate(raw.fechaIngreso||raw.fecha_ingreso||raw.fecha||'');
       const issues=[];
-      if(!nombre) issues.push('Nombre sede requerido.');
-      if(!depCode) issues.push('Dependencia codigo requerida.');
-      if(!zoneCode) issues.push('Zona codigo requerida.');
-      if(!Number.isFinite(ops) || ops<0 || !Number.isInteger(ops)) issues.push('Nro operarios invalido.');
-      if(!['lun_vie','lun_sab','lun_dom'].includes(jornada)) issues.push('Jornada invalida (use: lun_vie, lun_sab o lun_dom).');
-      const dep=depByCode.get(depCode);
-      const zone=zoneByCode.get(zoneCode);
-      if(depCode && !dep) issues.push(`Dependencia no existe: ${depCode}`);
-      if(zoneCode && !zone) issues.push(`Zona no existe: ${zoneCode}`);
-      const key=nombre.toLowerCase();
-      if(key && existingNames.has(key)) issues.push('Sede ya existe.');
-      if(key && localNames.has(key)) issues.push('Sede duplicada en archivo.');
-      if(key) localNames.add(key);
+      if(!documento) issues.push('Documento requerido.');
+      if(!nombre) issues.push('Nombre requerido.');
+      if(!telefono) issues.push('Telefono requerido.');
+      if(!cargoCode) issues.push('Cargo codigo requerido.');
+      if(!sedeCode) issues.push('Sede codigo requerida.');
+      if(!fechaIngreso) issues.push('Fecha ingreso invalida.');
+      const cargo=cargoByCode.get(cargoCode);
+      const sede=sedeByCode.get(sedeCode);
+      if(cargoCode && !cargo) issues.push(`Cargo no existe: ${cargoCode}`);
+      if(sedeCode && !sede) issues.push(`Sede no existe: ${sedeCode}`);
+      if(documento && existingDocs.has(documento)) issues.push('Documento ya existe en supernumerarios.');
+      if(documento && localDocs.has(documento)) issues.push('Documento duplicado en archivo.');
+      if(documento) localDocs.add(documento);
 
       if(issues.length){
         errors.push({ row:rowNum, message: issues.join(' ') });
-        preview.push({ nombre, dependenciaCodigo:raw.dependenciaCodigo||raw.dependencia||'', zonaCodigo:raw.zonaCodigo||raw.zona||'', dependenciaNombre:dep?.nombre||'', zonaNombre:zone?.nombre||'', numeroOperarios:ops, jornada, ok:false });
+        preview.push({ documento, nombre, telefono, cargoCodigo:raw.cargoCodigo||raw.cargo||'', sedeCodigo:raw.sedeCodigo||raw.sede||'', cargoNombre:cargo?.nombre||'', sedeNombre:sede?.nombre||'', fechaIngreso, ok:false });
         return;
       }
 
       valid.push({
+        documento,
         nombre,
-        dependenciaCodigo:dep.codigo,
-        dependenciaNombre:dep.nombre,
-        zonaCodigo:zone.codigo,
-        zonaNombre:zone.nombre,
-        numeroOperarios:ops,
-        jornada
+        telefono,
+        cargoCodigo:cargo.codigo,
+        cargoNombre:cargo.nombre,
+        sedeCodigo:sede.codigo,
+        sedeNombre:sede.nombre,
+        fechaIngreso: new Date(`${fechaIngreso}T00:00:00`)
       });
-      preview.push({ nombre, dependenciaCodigo:dep.codigo, zonaCodigo:zone.codigo, dependenciaNombre:dep.nombre, zonaNombre:zone.nombre, numeroOperarios:ops, jornada, ok:true });
+      preview.push({ documento, nombre, telefono, cargoCodigo:cargo.codigo, sedeCodigo:sede.codigo, cargoNombre:cargo.nombre, sedeNombre:sede.nombre, fechaIngreso, ok:true });
     });
+
     return { rows, valid, errors, preview };
   }
 
@@ -205,24 +210,41 @@ export const CargueMasivoSedesAdmin=(mount,deps={})=>{
     if(!rows.length) return [];
     const headers=rows[0].map(h=> String(h||'').trim());
     return rows.slice(1).map(cols=>{
-      const obj={};
-      headers.forEach((h,i)=>{ obj[h]=cols[i]??''; });
-      return normalizeInputRow(obj);
+      const obj={}; headers.forEach((h,i)=>{ obj[h]=cols[i]??''; }); return normalizeInputRow(obj);
     });
   }
 
   function normalizeInputRow(obj){
-    const out={ nombre:'', dependenciaCodigo:'', zonaCodigo:'', numeroOperarios:'', jornada:'' };
+    const out={ documento:'', nombre:'', telefono:'', cargoCodigo:'', sedeCodigo:'', fechaIngreso:'' };
     Object.keys(obj||{}).forEach((k)=>{
       const key=String(k||'').trim().toLowerCase();
       const v=String(obj[k]??'').trim();
-      if(key==='nombre sede' || key==='nombre' || key==='sede') out.nombre=v;
-      if(key==='dependencia codigo' || key==='dependencia_codigo' || key==='dependencia') out.dependenciaCodigo=v;
-      if(key==='zona codigo' || key==='zona_codigo' || key==='zona') out.zonaCodigo=v;
-      if(key==='nro operarios' || key==='numero operarios' || key==='operarios') out.numeroOperarios=v;
-      if(key==='jornada' || key==='horario') out.jornada=v.toLowerCase();
+      if(key==='documento' || key==='doc') out.documento=v;
+      if(key==='nombre' || key==='nombre completo') out.nombre=v;
+      if(key==='telefono' || key==='celular' || key==='numero cel') out.telefono=v;
+      if(key==='cargo codigo' || key==='cargo_codigo' || key==='cargo') out.cargoCodigo=v;
+      if(key==='sede codigo' || key==='sede_codigo' || key==='sede') out.sedeCodigo=v;
+      if(key==='fecha ingreso' || key==='fecha_ingreso' || key==='fecha') out.fechaIngreso=v;
     });
     return out;
+  }
+
+  function normalizeDate(value){
+    const v=String(value||'').trim();
+    if(!v) return '';
+    if(/^\d{4}-\d{2}-\d{2}$/.test(v)) return v;
+    const parts=v.split(/[\/\-.]/).map(p=> p.trim()).filter(Boolean);
+    if(parts.length===3){
+      let d=''; let m=''; let y='';
+      if(parts[0].length===4){ y=parts[0]; m=parts[1]; d=parts[2]; }
+      else { d=parts[0]; m=parts[1]; y=parts[2]; }
+      let yy=Number(y); const dd=Number(d); const mm=Number(m);
+      if(!Number.isFinite(yy)||!Number.isFinite(dd)||!Number.isFinite(mm)) return '';
+      if(y.length===2) yy=2000+yy;
+      if(dd<1||dd>31||mm<1||mm>12) return '';
+      return `${String(yy).padStart(4,'0')}-${String(mm).padStart(2,'0')}-${String(dd).padStart(2,'0')}`;
+    }
+    return '';
   }
 
   function downloadCsv(filename, rows){
@@ -245,5 +267,6 @@ export const CargueMasivoSedesAdmin=(mount,deps={})=>{
   }
 
   mount.replaceChildren(ui);
-  return ()=>{ unSedes?.(); unDeps?.(); unZones?.(); };
+  return ()=>{ unEmp?.(); unCargo?.(); unSede?.(); };
 };
+

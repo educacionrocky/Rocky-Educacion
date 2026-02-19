@@ -13,16 +13,19 @@ import { ZonesAdmin } from './components/ZonesAdmin.js';
 import { DependenciesAdmin } from './components/DependenciesAdmin.js';
 import { SedesAdmin } from './components/SedesAdmin.js';
 import { EmployeesAdmin } from './components/EmployeesAdmin.js';
+import { SupernumerariosAdmin } from './components/SupernumerariosAdmin.js';
 import { SupervisorsAdmin } from './components/SupervisorsAdmin.js';
 import { CargosAdmin } from './components/CargosAdmin.js';
 import { NovedadesAdmin } from './components/NovedadesAdmin.js';
 import { CargueMasivoAdmin } from './components/CargueMasivoAdmin.js';
+import { CargueMasivoSupernumerariosAdmin } from './components/CargueMasivoSupernumerariosAdmin.js';
 import { CargueMasivoSedesAdmin } from './components/CargueMasivoSedesAdmin.js';
 import { ImportHistory } from './components/ImportHistory.js';
 import { Payroll } from './components/Payroll.js';
 import { Absenteeism } from './components/Absenteeism.js';
 import { Reports } from './components/Reports.js';
 import { UploadData } from './components/UploadData.js';
+import { ImportReplacements } from './components/ImportReplacements.js';
 import { CargarDatos } from './components/CargarDatos.js';
 import { PermissionsCenter } from './components/PermissionsCenter.js';
 
@@ -66,6 +69,8 @@ let unsubRoleMatrix=null; let unsubUserOverrides=null; let unsubAudit=null;
         // empleados
         streamEmployees:fb.streamEmployees, createEmployee:fb.createEmployee, updateEmployee:fb.updateEmployee, setEmployeeStatus:fb.setEmployeeStatus, findEmployeeByCode:fb.findEmployeeByCode, findEmployeeByDocument:fb.findEmployeeByDocument, getNextEmployeeCode:fb.getNextEmployeeCode,
         createEmployeesBulk:fb.createEmployeesBulk,
+        // supernumerarios
+        streamSupernumerarios:fb.streamSupernumerarios, createSupernumerario:fb.createSupernumerario, updateSupernumerario:fb.updateSupernumerario, setSupernumerarioStatus:fb.setSupernumerarioStatus, findSupernumerarioByCode:fb.findSupernumerarioByCode, findSupernumerarioByDocument:fb.findSupernumerarioByDocument, getNextSupernumerarioCode:fb.getNextSupernumerarioCode, createSupernumerariosBulk:fb.createSupernumerariosBulk,
         // cargos
         streamCargos:fb.streamCargos, createCargo:fb.createCargo, updateCargo:fb.updateCargo, setCargoStatus:fb.setCargoStatus, findCargoByCode:fb.findCargoByCode, getNextCargoCode:fb.getNextCargoCode,
         // novedades
@@ -73,7 +78,9 @@ let unsubRoleMatrix=null; let unsubUserOverrides=null; let unsubAudit=null;
         // supervisores
         streamSupervisors:fb.streamSupervisors, createSupervisor:fb.createSupervisor, updateSupervisor:fb.updateSupervisor, setSupervisorStatus:fb.setSupervisorStatus, findSupervisorByCode:fb.findSupervisorByCode, findSupervisorByDocument:fb.findSupervisorByDocument, getNextSupervisorCode:fb.getNextSupervisorCode,
         // operacion
-        confirmImportOperation:fb.confirmImportOperation
+        confirmImportOperation:fb.confirmImportOperation, saveImportReplacements:fb.saveImportReplacements,
+        listSedeStatusRange:fb.listSedeStatusRange, listAttendanceRange:fb.listAttendanceRange, listImportReplacementsRange:fb.listImportReplacementsRange,
+        streamImportHistory:fb.streamImportHistory
       };
       fb.authState(async (user)=>{
         if(unsubRoleMatrix){unsubRoleMatrix();unsubRoleMatrix=null;} if(unsubUserOverrides){unsubUserOverrides();unsubUserOverrides=null;}
@@ -105,6 +112,8 @@ let unsubRoleMatrix=null; let unsubUserOverrides=null; let unsubAudit=null;
   addRoute('/sedes', ()=> requireAuth(()=> guard(PERMS.MANAGE_SEDES, ()=> SedesAdmin(root, deps))));
   addRoute('/bulk-upload-sedes', ()=> requireAuth(()=> guard(PERMS.MANAGE_SEDES, ()=> CargueMasivoSedesAdmin(root, deps))));
   addRoute('/employees', ()=> requireAuth(()=> guard(PERMS.MANAGE_EMPLOYEES, ()=> EmployeesAdmin(root, deps))));
+  addRoute('/supernumerarios', ()=> requireAuth(()=> guard(PERMS.MANAGE_EMPLOYEES, ()=> SupernumerariosAdmin(root, deps))));
+  addRoute('/bulk-upload-supernumerarios', ()=> requireAuth(()=> guard(PERMS.MANAGE_EMPLOYEES, ()=> CargueMasivoSupernumerariosAdmin(root, deps))));
   addRoute('/bulk-upload', ()=> requireAuth(()=> guard(PERMS.MANAGE_EMPLOYEES, ()=> CargueMasivoAdmin(root, deps))));
   addRoute('/cargos', ()=> requireAuth(()=> guard(PERMS.MANAGE_EMPLOYEES, ()=> CargosAdmin(root, deps))));
   addRoute('/novedades', ()=> requireAuth(()=> guard(PERMS.MANAGE_EMPLOYEES, ()=> NovedadesAdmin(root, deps))));
@@ -112,9 +121,10 @@ let unsubRoleMatrix=null; let unsubUserOverrides=null; let unsubAudit=null;
 
   // Operación
   addRoute('/imports', ()=> requireAuth(()=> guard(PERMS.IMPORT_DATA, ()=> UploadData(root, deps))));
-  addRoute('/import-history', ()=> requireAuth(()=> guard(PERMS.VIEW_IMPORT_HISTORY, ()=> ImportHistory(root))));
+  addRoute('/imports-replacements', ()=> requireAuth(()=> guard(PERMS.IMPORT_DATA, ()=> ImportReplacements(root, deps))));
+  addRoute('/import-history', ()=> requireAuth(()=> guard(PERMS.VIEW_IMPORT_HISTORY, ()=> ImportHistory(root, deps))));
   addRoute('/payroll', ()=> requireAuth(()=> guard(PERMS.RUN_PAYROLL, ()=> Payroll(root))));
-  addRoute('/absenteeism', ()=> requireAuth(()=> guard(PERMS.MANAGE_ABSENTEEISM, ()=> Absenteeism(root))));
+  addRoute('/absenteeism', ()=> requireAuth(()=> guard(PERMS.MANAGE_ABSENTEEISM, ()=> Absenteeism(root, deps))));
 
   // Consultor
   addRoute('/reports', ()=> requireAuth(()=> guard(PERMS.VIEW_REPORTS, ()=> Reports(root))));

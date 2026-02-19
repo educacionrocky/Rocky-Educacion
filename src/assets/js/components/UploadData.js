@@ -1,5 +1,7 @@
-import { el, qs } from '../utils/dom.js';
+import { el, qs, enableSectionToggles } from '../utils/dom.js';
 import { SHEET_ID, SHEET_NAME, SHEET_GID } from '../config.js';
+import { setState } from '../state.js';
+import { navigate } from '../router.js';
 
 export const UploadData=(mount,deps={})=>{
   const ui=el('section',{className:'main-card'},[
@@ -11,35 +13,74 @@ export const UploadData=(mount,deps={})=>{
       el('span',{id:'msg',className:'text-muted'},[' '])
     ]),
     el('div',{className:'divider'}),
-    el('div',{className:'form-row'},[
-      el('div',{},[ el('label',{className:'label'},['Operarios esperados']), el('input',{id:'opExpected',className:'input',disabled:true}) ]),
-      el('div',{},[ el('label',{className:'label'},['Documentos en registro']), el('input',{id:'opFound',className:'input',disabled:true}) ]),
-      el('div',{},[ el('label',{className:'label'},['Faltan']), el('input',{id:'opMissing',className:'input',disabled:true}) ]),
-      el('div',{},[ el('label',{className:'label'},['Sobran']), el('input',{id:'opExtra',className:'input',disabled:true}) ])
-    ]),
-    el('div',{className:'mt-2 table-wrap'},[
-      el('table',{className:'table',id:'tblMissing'},[
-        el('thead',{},[ el('tr',{},[ el('th',{},['Faltan (Operarios)']), el('th',{},['Documento']), el('th',{},['Nombre']), el('th',{},['Sede']), el('th',{},['Novedad']) ]) ]),
-        el('tbody',{})
+    el('div',{className:'section-block'},[
+      el('h3',{className:'section-title'},['Resumen']),
+      el('div',{className:'form-row'},[
+        el('div',{},[ el('label',{className:'label'},['Empleados planeados']), el('input',{id:'opPlanned',className:'input',disabled:true}) ]),
+        el('div',{},[ el('label',{className:'label'},['Empleados esperados']), el('input',{id:'opExpected',className:'input',disabled:true}) ]),
+        el('div',{},[ el('label',{className:'label'},['Empleados en registro']), el('input',{id:'opFound',className:'input',disabled:true}) ]),
+        el('div',{},[ el('label',{className:'label'},['Faltan']), el('input',{id:'opMissing',className:'input',disabled:true}) ]),
+        el('div',{},[ el('label',{className:'label'},['Sobran']), el('input',{id:'opExtra',className:'input',disabled:true}) ]),
+        el('div',{},[ el('label',{className:'label'},['Supervisores faltantes']), el('input',{id:'opMissingSup',className:'input',disabled:true}) ]),
+        el('div',{},[ el('label',{className:'label'},['Supernumerarios faltantes']), el('input',{id:'opMissingSupn',className:'input',disabled:true}) ])
       ])
     ]),
-    el('div',{className:'mt-2 table-wrap'},[
-      el('table',{className:'table',id:'tblExtra'},[
-        el('thead',{},[ el('tr',{},[ el('th',{},['Sobran (Registro)']), el('th',{},['Documento']), el('th',{},['Nombre en registro']), el('th',{},['Novedad']) ]) ]),
-        el('tbody',{})
-      ])
+    el('div',{className:'section-block'},[
+      el('h3',{className:'section-title'},['Empleados faltantes']),
+      el('div',{className:'table-wrap'},[
+        el('table',{className:'table',id:'tblMissing'},[
+          el('thead',{},[ el('tr',{},[ el('th',{},['Faltan (Empleados)']), el('th',{},['Documento']), el('th',{},['Nombre']), el('th',{},['Sede']), el('th',{},['Novedad']) ]) ]),
+          el('tbody',{})
+        ])
+      ]),
+      el('p',{id:'totMissing',className:'text-muted'},['Total faltantes: 0'])
     ]),
-    el('div',{className:'mt-2 table-wrap'},[
-      el('table',{className:'table',id:'tblSedes'},[
-        el('thead',{},[ el('tr',{},[
-          el('th',{},['Sede']),
-          el('th',{},['Esperados']),
-          el('th',{},['Presentes']),
-          el('th',{},['Faltan']),
-          el('th',{},['Sobran'])
-        ]) ]),
-        el('tbody',{})
-      ])
+    el('div',{className:'section-block'},[
+      el('h3',{className:'section-title'},['Registros sobrantes']),
+      el('div',{className:'table-wrap'},[
+        el('table',{className:'table',id:'tblExtra'},[
+          el('thead',{},[ el('tr',{},[ el('th',{},['Sobran (Registro)']), el('th',{},['Documento']), el('th',{},['Nombre en registro']), el('th',{},['Novedad']) ]) ]),
+          el('tbody',{})
+        ])
+      ]),
+      el('p',{id:'totExtra',className:'text-muted'},['Total sobrantes: 0'])
+    ]),
+    el('div',{className:'section-block'},[
+      el('h3',{className:'section-title'},['Supervisores faltantes']),
+      el('div',{className:'table-wrap'},[
+        el('table',{className:'table',id:'tblMissingSup'},[
+          el('thead',{},[ el('tr',{},[ el('th',{},['Supervisores faltantes']), el('th',{},['Documento']), el('th',{},['Nombre']), el('th',{},['Zona']) ]) ]),
+          el('tbody',{})
+        ])
+      ]),
+      el('p',{id:'totSup',className:'text-muted'},['Total supervisores faltantes: 0'])
+    ]),
+    el('div',{className:'section-block'},[
+      el('h3',{className:'section-title'},['Supernumerarios faltantes']),
+      el('div',{className:'table-wrap'},[
+        el('table',{className:'table',id:'tblMissingSupn'},[
+          el('thead',{},[ el('tr',{},[ el('th',{},['Supernumerarios faltantes']), el('th',{},['Documento']), el('th',{},['Nombre']), el('th',{},['Sede']) ]) ]),
+          el('tbody',{})
+        ])
+      ]),
+      el('p',{id:'totSupn',className:'text-muted'},['Total supernumerarios faltantes: 0'])
+    ]),
+    el('div',{className:'section-block'},[
+      el('h3',{className:'section-title'},['Personal por sede']),
+      el('div',{className:'table-wrap'},[
+        el('table',{className:'table',id:'tblSedes'},[
+          el('thead',{},[ el('tr',{},[
+            el('th',{},['Sede']),
+            el('th',{},['Esperados']),
+            el('th',{},['Presentes']),
+            el('th',{},['Faltan']),
+            el('th',{},['Sobran']),
+            el('th',{},['Novedad'])
+          ]) ]),
+          el('tbody',{})
+        ])
+      ]),
+      el('p',{id:'totSedes',className:'text-muted'},['Totales sedes - Esperados: 0, Presentes: 0, Faltan: 0, Sobran: 0, Novedad: 0'])
     ])
   ]);
 
@@ -48,11 +89,14 @@ export const UploadData=(mount,deps={})=>{
   const inputDate=qs('#opDate',ui);
   inputDate.value = todayBogota();
 
-  let employees=[]; let cargos=[]; let sedes=[];
+  let employees=[]; let cargos=[]; let sedes=[]; let supervisors=[]; let supernumerarios=[]; let novedades=[];
   let lastResult=null;
   const unEmp=deps.streamEmployees?.((arr)=>{ employees=arr||[]; });
   const unCargo=deps.streamCargos?.((arr)=>{ cargos=arr||[]; });
   const unSedes=deps.streamSedes?.((arr)=>{ sedes=arr||[]; });
+  const unSup=deps.streamSupervisors?.((arr)=>{ supervisors=arr||[]; });
+  const unSupn=deps.streamSupernumerarios?.((arr)=>{ supernumerarios=arr||[]; });
+  const unNov=deps.streamNovedades?.((arr)=>{ novedades=arr||[]; });
 
   qs('#btnCheck',ui).addEventListener('click',async()=>{
     msg.textContent='Cargando...';
@@ -63,14 +107,17 @@ export const UploadData=(mount,deps={})=>{
 
       const rows=await fetchSheetRows();
       const byDate=rows.filter(r=> normalizeDate(r.fecha)===date);
-      if(!byDate.length){ msg.textContent='No hay registros para esa fecha.'; fillSummary(0,0,0,0); renderTables([],[]); return; }
+      if(!byDate.length){ msg.textContent='No hay registros para esa fecha.'; fillSummary(0,0,0,0,0,0,0); renderTables([],[],[],[]); return; }
 
-      const operarioCodes=new Set(cargos.filter(c=> (c.nombre||'').toLowerCase()==='operario').map(c=> c.codigo));
-      const operarios=employees.filter(e=>{
-        const name=(e.cargoNombre||'').toLowerCase();
-        const code=e.cargoCodigo||'';
-        return name==='operario' || (code && operarioCodes.has(code));
+      const activeSedesForDate=(sedes||[]).filter((s)=> s.estado!=='inactivo' && sedeOperaEnFecha(s, date));
+      const activeSedeCodes=new Set(activeSedesForDate.map((s)=> String(s.codigo||'').trim()).filter(Boolean));
+      const operarios=employees.filter((e)=>{
+        if(!isEmployeeEligibleForDate(e, date)) return false;
+        const sedeCode=String(e.sedeCodigo||'').trim();
+        return !!sedeCode && activeSedeCodes.has(sedeCode);
       });
+      const plannedCount=activeSedesForDate
+        .reduce((acc,s)=> acc + (Number.isFinite(Number(s.numeroOperarios)) ? Number(s.numeroOperarios) : 0), 0);
 
       const regDocs=new Map();
       for(const r of byDate){
@@ -81,6 +128,12 @@ export const UploadData=(mount,deps={})=>{
 
       const missing=[];
       const extra=[];
+      const activeSupernumerarioDocs=new Set(
+        (supernumerarios||[])
+          .filter((s)=> String(s.estado||'').toLowerCase()!=='inactivo')
+          .map((s)=> String(s.documento||'').trim())
+          .filter(Boolean)
+      );
       for(const op of operarios){
         const doc=String(op.documento||'').trim();
         if(!doc) continue;
@@ -89,15 +142,30 @@ export const UploadData=(mount,deps={})=>{
         }
       }
       for(const [doc,r] of regDocs.entries()){
+        if(activeSupernumerarioDocs.has(doc)) continue;
         const exists=operarios.some(op=> String(op.documento||'').trim()===doc);
         if(!exists) extra.push(r);
       }
 
-      fillSummary(operarios.length, regDocs.size, missing.length, extra.length);
-      renderTables(missing, extra, buildSedeDiffs(operarios, regDocs, sedes));
-      lastResult=buildResult(date, operarios, regDocs, missing, extra, sedes);
+      const activeEmployeeDocs=new Set(operarios.map((e)=> String(e.documento||'').trim()).filter(Boolean));
+      const supervisorsLinked=supervisors.filter((s)=>{
+        if(s.estado==='inactivo') return false;
+        const doc=String(s.documento||'').trim();
+        return !!doc && activeEmployeeDocs.has(doc);
+      });
+      const missingSupervisors=supervisorsLinked.filter((s)=> !regDocs.has(String(s.documento||'').trim()));
+      const supernumerariosLinked=supernumerarios.filter((s)=>{
+        if(s.estado==='inactivo') return false;
+        const doc=String(s.documento||'').trim();
+        return !!doc && activeEmployeeDocs.has(doc);
+      });
+      const missingSupernumerarios=supernumerariosLinked.filter((s)=> !regDocs.has(String(s.documento||'').trim()));
+
+      fillSummary(plannedCount, operarios.length, regDocs.size, missing.length, extra.length, missingSupervisors.length, missingSupernumerarios.length);
+      renderTables(missing, extra, missingSupervisors, missingSupernumerarios, buildSedeDiffs(operarios, regDocs, activeSedesForDate, novedades));
+      lastResult=buildResult(date, plannedCount, operarios, regDocs, missing, extra, missingSupervisors, missingSupernumerarios, activeSedesForDate, novedades, activeSupernumerarioDocs);
       btnConfirm.disabled=false;
-      msg.textContent='Listo. Revisa faltan/sobran.';
+      msg.textContent='Listo. Revisa faltan/sobran, supervisores y supernumerarios faltantes.';
     }catch(e){
       msg.textContent='Error: '+(e?.message||e);
     }
@@ -108,27 +176,45 @@ export const UploadData=(mount,deps={})=>{
     btnConfirm.disabled=true;
     msg.textContent='Guardando operacion...';
     try{
-      await deps.confirmImportOperation?.(lastResult);
-      msg.textContent='Operacion guardada OK';
+      const importId=await deps.confirmImportOperation?.(lastResult);
+      const candidates=lastResult.replacementCandidates||[];
+      setState({
+        pendingReplacementFlow:{
+          importId: importId||null,
+          fechaOperacion: lastResult.fechaOperacion||null,
+          candidates
+        }
+      });
+      if(candidates.length){
+        msg.textContent='Operacion guardada. Continuando a reemplazos...';
+        navigate('/imports-replacements');
+      }else{
+        msg.textContent='Operacion guardada OK (sin novedades por reemplazar).';
+      }
     }catch(e){
       msg.textContent='Error al guardar: '+(e?.message||e);
       btnConfirm.disabled=false;
     }
   });
 
-  function fillSummary(expected, found, missing, extra){
+  function fillSummary(planned, expected, found, missing, extra, missingSup, missingSupn){
+    qs('#opPlanned',ui).value=String(planned);
     qs('#opExpected',ui).value=String(expected);
     qs('#opFound',ui).value=String(found);
     qs('#opMissing',ui).value=String(missing);
     qs('#opExtra',ui).value=String(extra);
+    qs('#opMissingSup',ui).value=String(missingSup||0);
+    qs('#opMissingSupn',ui).value=String(missingSupn||0);
   }
-  function renderTables(missing, extra, sedeDiffs){
+  function renderTables(missing, extra, missingSup, missingSupn, sedeDiffs){
     const tbMissing=qs('#tblMissing tbody',ui);
     const tbExtra=qs('#tblExtra tbody',ui);
+    const tbMissingSup=qs('#tblMissingSup tbody',ui);
+    const tbMissingSupn=qs('#tblMissingSupn tbody',ui);
     const tbSedes=qs('#tblSedes tbody',ui);
     tbMissing.replaceChildren(...missing.map(op=>{
       return el('tr',{},[
-        el('td',{},['Operario']),
+        el('td',{},['Empleado']),
         el('td',{},[op.documento||'-']),
         el('td',{},[op.nombre||'-']),
         el('td',{},[op.sedeNombre||op.sedeCodigo||'-']),
@@ -143,18 +229,50 @@ export const UploadData=(mount,deps={})=>{
         el('td',{},[String(r.novedad||'-')])
       ]);
     }));
-    tbSedes.replaceChildren(...(sedeDiffs||[]).map(s=>{
+    tbMissingSup.replaceChildren(...(missingSup||[]).map(s=>{
+      return el('tr',{},[
+        el('td',{},['Supervisor']),
+        el('td',{},[String(s.documento||'-')]),
+        el('td',{},[String(s.nombre||'-')]),
+        el('td',{},[String(s.zonaNombre||s.zonaCodigo||'-')])
+      ]);
+    }));
+    tbMissingSupn.replaceChildren(...(missingSupn||[]).map(s=>{
+      return el('tr',{},[
+        el('td',{},['Supernumerario']),
+        el('td',{},[String(s.documento||'-')]),
+        el('td',{},[String(s.nombre||'-')]),
+        el('td',{},[String(s.sedeNombre||s.sedeCodigo||'-')])
+      ]);
+    }));
+    const conNovedad=(sedeDiffs||[]).filter((s)=> Number(s.faltan||0)>0 || Number(s.sobran||0)>0 || Number(s.novedad||0)>0);
+    tbSedes.replaceChildren(...conNovedad.map(s=>{
       return el('tr',{},[
         el('td',{},[s.sedeNombre||s.sedeCodigo||'-']),
         el('td',{},[String(s.esperados)]),
         el('td',{},[String(s.presentes)]),
         el('td',{},[String(s.faltan)]),
-        el('td',{},[String(s.sobran)])
+        el('td',{},[String(s.sobran)]),
+        el('td',{},[String(Number(s.novedad||0))])
       ]);
     }));
+    qs('#totMissing',ui).textContent=`Total faltantes: ${missing.length}`;
+    qs('#totExtra',ui).textContent=`Total sobrantes: ${extra.length}`;
+    qs('#totSup',ui).textContent=`Total supervisores faltantes: ${(missingSup||[]).length}`;
+    qs('#totSupn',ui).textContent=`Total supernumerarios faltantes: ${(missingSupn||[]).length}`;
+    const totalEsperados=conNovedad.reduce((acc,s)=> acc + Number(s.esperados||0),0);
+    const totalPresentes=conNovedad.reduce((acc,s)=> acc + Number(s.presentes||0),0);
+    const totalFaltan=conNovedad.reduce((acc,s)=> acc + Number(s.faltan||0),0);
+    const totalSobran=conNovedad.reduce((acc,s)=> acc + Number(s.sobran||0),0);
+    const totalNovedad=conNovedad.reduce((acc,s)=> acc + Number(s.novedad||0),0);
+    qs('#totSedes',ui).textContent=`Totales sedes - Esperados: ${totalEsperados}, Presentes: ${totalPresentes}, Faltan: ${totalFaltan}, Sobran: ${totalSobran}, Novedad: ${totalNovedad}`;
   }
 
-  function buildSedeDiffs(operarios, regDocs, sedesList){
+  function buildSedeDiffs(operarios, regDocs, sedesList, novedadesList){
+    const novedadReemplazoSi=new Set((novedadesList||[])
+      .filter((n)=> String(n.reemplazo||'').toLowerCase()==='si')
+      .flatMap((n)=> [String(n.codigoNovedad||'').trim(), String(n.codigo||'').trim()])
+      .filter(Boolean));
     const map=new Map();
     for(const sede of (sedesList||[])){
       const key=sede.codigo||'';
@@ -163,14 +281,21 @@ export const UploadData=(mount,deps={})=>{
         sedeCodigo:key,
         sedeNombre:sede.nombre||null,
         esperados: typeof sede.numeroOperarios==='number' ? sede.numeroOperarios : 0,
-        presentes:0
+        presentes:0,
+        novedad:0
       });
     }
     for(const op of operarios){
       const key=op.sedeCodigo||'';
       if(!key || !map.has(key)) continue;
       const doc=String(op.documento||'').trim();
-      if(regDocs.has(doc)) map.get(key).presentes+=1;
+      if(regDocs.has(doc)){
+        const stat=map.get(key);
+        stat.presentes+=1;
+        const reg=regDocs.get(doc);
+        const novCode=String(reg?.novedad||'').trim();
+        if(novCode && novedadReemplazoSi.has(novCode)) stat.novedad+=1;
+      }
     }
     return Array.from(map.values()).map(s=>{
       const faltan=Math.max(0, s.esperados - s.presentes);
@@ -182,10 +307,20 @@ export const UploadData=(mount,deps={})=>{
       if(aIssues!==bIssues) return bIssues - aIssues;
       if(a.faltan!==b.faltan) return b.faltan - a.faltan;
       if(a.sobran!==b.sobran) return b.sobran - a.sobran;
+      if(a.novedad!==b.novedad) return b.novedad - a.novedad;
       return (a.sedeNombre||a.sedeCodigo||'').localeCompare(b.sedeNombre||b.sedeCodigo||'');
     });
   }
-  function buildResult(date, operarios, regDocs, missing, extra, sedesList){
+  function sedeOperaEnFecha(sede, dateStr){
+    const jornada=String(sede?.jornada||'lun_vie').toLowerCase();
+    const d=new Date(`${dateStr}T00:00:00`);
+    if(Number.isNaN(d.getTime())) return false;
+    const day=d.getDay(); // 0=domingo, 6=sabado
+    if(jornada==='lun_dom') return true;
+    if(jornada==='lun_sab') return day>=1 && day<=6;
+    return day>=1 && day<=5;
+  }
+  function buildResult(date, plannedCount, operarios, regDocs, missing, extra, missingSupervisors, missingSupernumerarios, sedesList, novedadesList, activeSupernumerarioDocs=new Set()){
     const missingDocs=missing.map(op=>({
       empleadoId: op.id||op.uid||null,
       documento: op.documento||null,
@@ -195,6 +330,7 @@ export const UploadData=(mount,deps={})=>{
     }));
     const extraDocs=Array.from(regDocs.values()).filter(r=>{
       const doc=String(r.documento||'').trim();
+      if(activeSupernumerarioDocs.has(doc)) return false;
       return !operarios.some(op=> String(op.documento||'').trim()===doc);
     }).map(r=>({
       documento: String(r.documento||'').trim()||null,
@@ -227,6 +363,10 @@ export const UploadData=(mount,deps={})=>{
       estado: 'pendiente'
     }));
 
+    const novedadReemplazoSi=new Set((novedadesList||[])
+      .filter((n)=> String(n.reemplazo||'').toLowerCase()==='si')
+      .flatMap((n)=> [String(n.codigoNovedad||'').trim(), String(n.codigo||'').trim()])
+      .filter(Boolean));
     const sedeMap=new Map();
     for(const sede of (sedesList||[])){
       const key=sede.codigo||'';
@@ -235,7 +375,8 @@ export const UploadData=(mount,deps={})=>{
         sedeCodigo:key,
         sedeNombre:sede.nombre||null,
         operariosEsperados: typeof sede.numeroOperarios==='number' ? sede.numeroOperarios : 0,
-        operariosPresentes:0
+        operariosPresentes:0,
+        novedades:0
       });
     }
     for(const op of operarios){
@@ -243,7 +384,12 @@ export const UploadData=(mount,deps={})=>{
       if(!key || !sedeMap.has(key)) continue;
       const s=sedeMap.get(key);
       const doc=String(op.documento||'').trim();
-      if(regDocs.has(doc)) s.operariosPresentes+=1;
+      if(regDocs.has(doc)){
+        s.operariosPresentes+=1;
+        const reg=regDocs.get(doc);
+        const novCode=String(reg?.novedad||'').trim();
+        if(novCode && novedadReemplazoSi.has(novCode)) s.novedades+=1;
+      }
     }
     const sedeStatus=Array.from(sedeMap.values()).map(s=>({
       fecha: date,
@@ -251,23 +397,76 @@ export const UploadData=(mount,deps={})=>{
       sedeNombre: s.sedeNombre||null,
       operariosEsperados: s.operariosEsperados,
       operariosPresentes: s.operariosPresentes,
-      faltantes: Math.max(0, s.operariosEsperados - s.operariosPresentes)
+      faltantes: Math.max(0, s.operariosEsperados - s.operariosPresentes),
+      novedades: s.novedades||0
     }));
+
+    const missingSupervisorsDocs=(missingSupervisors||[]).map((s)=>({
+      supervisorId: s.id||null,
+      documento: s.documento||null,
+      nombre: s.nombre||null,
+      zonaCodigo: s.zonaCodigo||null,
+      zonaNombre: s.zonaNombre||null
+    }));
+    const missingSupernumerariosDocs=(missingSupernumerarios||[]).map((s)=>({
+      supernumerarioId: s.id||null,
+      documento: s.documento||null,
+      nombre: s.nombre||null,
+      sedeCodigo: s.sedeCodigo||null,
+      sedeNombre: s.sedeNombre||null
+    }));
+    const replacementCandidates=buildReplacementCandidates(date, operarios, regDocs, novedadesList);
 
     return {
       fechaOperacion: date,
       source: { sheetId: SHEET_ID, sheetName: SHEET_NAME, sheetGid: SHEET_GID },
+      plannedCount: plannedCount,
       expectedCount: operarios.length,
       foundCount: regDocs.size,
       missingCount: missing.length,
       extraCount: extra.length,
+      missingSupervisorsCount: missingSupervisorsDocs.length,
+      missingSupernumerariosCount: missingSupernumerariosDocs.length,
       missingDocs,
       extraDocs,
+      missingSupervisors: missingSupervisorsDocs,
+      missingSupernumerarios: missingSupernumerariosDocs,
+      replacementCandidates,
       errores: [],
       attendance,
       absences,
       sedeStatus
     };
+  }
+  function buildReplacementCandidates(date, operarios, regDocs, novedadesList){
+    const novedadByCode=new Map();
+    (novedadesList||[]).forEach((n)=>{
+      if(String(n.reemplazo||'').toLowerCase()!=='si') return;
+      const c1=String(n.codigoNovedad||'').trim();
+      const c2=String(n.codigo||'').trim();
+      if(c1) novedadByCode.set(c1,n);
+      if(c2) novedadByCode.set(c2,n);
+    });
+    const out=[];
+    operarios.forEach((op)=>{
+      const doc=String(op.documento||'').trim();
+      if(!doc || !regDocs.has(doc)) return;
+      const reg=regDocs.get(doc);
+      const novCode=String(reg?.novedad||'').trim();
+      const nov=novedadByCode.get(novCode);
+      if(!nov) return;
+      out.push({
+        fecha: date,
+        empleadoId: op.id||op.uid||null,
+        documento: op.documento||null,
+        nombre: op.nombre||null,
+        sedeCodigo: op.sedeCodigo||null,
+        sedeNombre: op.sedeNombre||null,
+        novedadCodigo: novCode||null,
+        novedadNombre: nov.nombre||null
+      });
+    });
+    return out;
   }
 
   async function fetchSheetRows(){
@@ -390,11 +589,35 @@ export const UploadData=(mount,deps={})=>{
     return '';
   }
 
+  function isEmployeeEligibleForDate(employee, reportDate){
+    if(String(employee?.estado||'').toLowerCase()==='inactivo') return false;
+    const startDate=extractDate(employee?.fechaIngreso);
+    if(!startDate) return false;
+    // Regla solicitada: fecha de inicio igual o menor a la fecha del reporte.
+    return startDate <= reportDate;
+  }
+
+  function extractDate(value){
+    if(!value) return '';
+    if(typeof value==='string') return normalizeDate(value);
+    if(value instanceof Date){
+      if(Number.isNaN(value.getTime())) return '';
+      return value.toISOString().slice(0,10);
+    }
+    if(typeof value?.toDate==='function'){
+      const d=value.toDate();
+      if(!(d instanceof Date) || Number.isNaN(d.getTime())) return '';
+      return d.toISOString().slice(0,10);
+    }
+    return '';
+  }
+
   function todayBogota(){
     const fmt=new Intl.DateTimeFormat('en-CA',{ timeZone:'America/Bogota', year:'numeric', month:'2-digit', day:'2-digit' });
     return fmt.format(new Date());
   }
 
   mount.replaceChildren(ui);
-  return ()=>{ unEmp?.(); unCargo?.(); unSedes?.(); };
+  enableSectionToggles(ui);
+  return ()=>{ unEmp?.(); unCargo?.(); unSedes?.(); unSup?.(); unSupn?.(); unNov?.(); };
 };

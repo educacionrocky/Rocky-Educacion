@@ -74,7 +74,14 @@ export const SupervisorsAdmin=(mount,deps={})=>{
   let snapshot=[]; const tbody=ui.querySelector('tbody');
   let sortKey=''; let sortDir=1;
   let unZones=()=>{};
+  let unEmp=()=>{};
+  let employees=[];
   const zoneNameByCode=(code)=> zoneList.find(z=>z.codigo===code)?.nombre || '-';
+  const isLinkedByDoc=(doc)=>{
+    const d=String(doc||'').trim();
+    if(!d) return false;
+    return employees.some((e)=> e.estado!=='inactivo' && String(e.documento||'').trim()===d);
+  };
 
   qs('#btnCreate',ui).addEventListener('click',async()=>{
     const doc=qs('#sDoc',ui).value.trim();
@@ -125,7 +132,8 @@ export const SupervisorsAdmin=(mount,deps={})=>{
   function row(s){
     const tr=el('tr',{'data-id':s.id});
     const tdCodigo=el('td',{},[s.codigo||'-']);
-    const tdDoc=el('td',{},[s.documento||'-']);
+    const linked=isLinkedByDoc(s.documento);
+    const tdDoc=el('td',{}, linked ? [s.documento||'-',' ',el('span',{className:'badge'},['Vinculado'])] : [s.documento||'-']);
     const tdNombre=el('td',{},[s.nombre||'-']);
     const tdZona=el('td',{},[ s.zonaNombre||zoneNameByCode(s.zonaCodigo) ]);
     const tdEstado=el('td',{},[ statusBadge(s.estado) ]);
@@ -152,7 +160,20 @@ export const SupervisorsAdmin=(mount,deps={})=>{
     btnToggle.addEventListener('click',async()=>{
       const target=s.estado==='activo'?'inactivo':'activo';
       if(!window.confirm(`${s.estado==='activo'?'Desactivar':'Activar'} supervisor "${s.nombre}"?`)) return;
-      try{ await deps.setSupervisorStatus?.(s.id,target); await deps.addAuditLog?.({ targetType:'supervisor', targetId:s.id, action: target==='activo'?'activate_supervisor':'deactivate_supervisor', before:{estado:s.estado}, after:{estado:target} }); }catch(err){ alert('Error: '+(err?.message||err)); }
+      try{
+        let retiroDate=null;
+        if(target==='inactivo'){
+          const suggested=toInputDate(new Date()) || '';
+          const retiroInput=window.prompt('Fecha de retiro (AAAA-MM-DD):', suggested);
+          if(retiroInput===null) return;
+          const retiro=String(retiroInput||'').trim();
+          if(!/^\d{4}-\d{2}-\d{2}$/.test(retiro)) return alert('Fecha invalida. Usa formato AAAA-MM-DD.');
+          retiroDate=new Date(`${retiro}T00:00:00`);
+          if(Number.isNaN(retiroDate.getTime())) return alert('Fecha invalida.');
+        }
+        await deps.setSupervisorStatus?.(s.id,target,retiroDate);
+        await deps.addAuditLog?.({ targetType:'supervisor', targetId:s.id, action: target==='activo'?'activate_supervisor':'deactivate_supervisor', before:{estado:s.estado, fechaRetiro:s.fechaRetiro||null}, after:{estado:target, fechaRetiro:retiroDate||null} });
+      }catch(err){ alert('Error: '+(err?.message||err)); }
     });
     box.append(btnEdit,btnToggle); return box;
   }
@@ -162,7 +183,8 @@ export const SupervisorsAdmin=(mount,deps={})=>{
       documento:s.documento||'',
       nombre:s.nombre||'',
       zonaCodigo:s.zonaCodigo||'',
-      fechaIngreso: toInputDate(s.fechaIngreso)
+      fechaIngreso: toInputDate(s.fechaIngreso),
+      fechaRetiro: toInputDate(s.fechaRetiro)
     };
     const tds=tr.querySelectorAll('td');
     tds[0].replaceChildren(el('input',{className:'input',value:cur.codigo,style:'max-width:140px'}));
@@ -171,7 +193,7 @@ export const SupervisorsAdmin=(mount,deps={})=>{
     tds[3].replaceChildren(el('select',{className:'select'},buildOptions(zoneList,cur.zonaCodigo)));
     tds[4].replaceChildren(statusBadge(s.estado));
     tds[5].replaceChildren(el('input',{className:'input',type:'date',value:cur.fechaIngreso||''}));
-    tds[6].textContent=formatDate(s.fechaRetiro);
+    tds[6].replaceChildren(el('input',{className:'input',type:'date',value:cur.fechaRetiro||''}));
     tds[7].textContent=s.lastModifiedByEmail||s.lastModifiedByUid||'-';
     const box=el('div',{className:'row-actions'},[]);
     const btnSave=el('button',{className:'btn btn--primary'},['Guardar']);
@@ -182,9 +204,11 @@ export const SupervisorsAdmin=(mount,deps={})=>{
       const newName=tds[2].querySelector('input').value.trim();
       const newZoneCode=tds[3].querySelector('select').value;
       const newIngreso=tds[5].querySelector('input').value.trim();
+      const newRetiro=tds[6].querySelector('input').value.trim();
       if(!newCode||!newDoc||!newName) return alert('Completa codigo, documento y nombre.');
       if(!newZoneCode) return alert('Selecciona una zona.');
       if(!newIngreso) return alert('Selecciona la fecha de ingreso.');
+      if(s.estado==='inactivo' && !newRetiro) return alert('Para supervisores inactivos, la fecha de retiro es obligatoria.');
       try{
         if(newCode!==s.codigo){ const dup=await deps.findSupervisorByCode?.(newCode); if(dup && dup.id!==s.id) return alert('Ya existe un supervisor con ese codigo.'); }
         if(newDoc!==s.documento){ const dupDoc=await deps.findSupervisorByDocument?.(newDoc); if(dupDoc && dupDoc.id!==s.id) return alert('Ya existe un supervisor con ese documento.'); }
@@ -195,9 +219,10 @@ export const SupervisorsAdmin=(mount,deps={})=>{
           nombre:newName,
           zonaCodigo:newZoneCode,
           zonaNombre:newZone?.nombre||null,
-          fechaIngreso: new Date(`${newIngreso}T00:00:00`)
+          fechaIngreso: new Date(`${newIngreso}T00:00:00`),
+          fechaRetiro: newRetiro ? new Date(`${newRetiro}T00:00:00`) : null
         });
-        await deps.addAuditLog?.({ targetType:'supervisor', targetId:s.id, action:'update_supervisor', before:{ codigo:s.codigo, documento:s.documento, nombre:s.nombre, zonaCodigo:s.zonaCodigo }, after:{ codigo:newCode, documento:newDoc, nombre:newName, zonaCodigo:newZoneCode } });
+        await deps.addAuditLog?.({ targetType:'supervisor', targetId:s.id, action:'update_supervisor', before:{ codigo:s.codigo, documento:s.documento, nombre:s.nombre, zonaCodigo:s.zonaCodigo, fechaRetiro:s.fechaRetiro||null }, after:{ codigo:newCode, documento:newDoc, nombre:newName, zonaCodigo:newZoneCode, fechaRetiro:newRetiro||null } });
       }catch(err){ alert('Error: '+(err?.message||err)); }
     });
     btnCancel.addEventListener('click',()=> render());
@@ -212,10 +237,11 @@ export const SupervisorsAdmin=(mount,deps={})=>{
     }catch{ return ''; }
   }
   unZones=deps.streamZones?.((arr)=>{ zoneList=(arr||[]).filter(z=>z.estado!=='inactivo'); renderZoneSelect(); render(); }) || (()=>{});
+  unEmp=deps.streamEmployees?.((arr)=>{ employees=arr||[]; render(); }) || (()=>{});
   const un=deps.streamSupervisors?.((arr)=>{ snapshot=arr||[]; render(); });
   qs('#txtSearch',ui).addEventListener('input',render);
   qs('#selStatus',ui).addEventListener('change',render);
   initSorting();
   mount.replaceChildren(ui);
-  return ()=>{ un?.(); unZones?.(); };
+  return ()=>{ un?.(); unZones?.(); unEmp?.(); };
 };

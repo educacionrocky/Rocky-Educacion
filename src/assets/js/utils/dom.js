@@ -49,3 +49,37 @@ export const el = (tag, props = {}, children = []) => {
 
   return node;
 };
+
+export const enableSectionToggles = (scope = document) => {
+  qsa('.section-block', scope).forEach((section) => {
+    if (section.dataset.collapsibleInit === '1') return;
+    const title = qs('.section-title', section);
+    if (!title) return;
+
+    const contentNodes = Array.from(section.children).filter((child) => child !== title);
+    const content = document.createElement('div');
+    content.className = 'section-content';
+    contentNodes.forEach((node) => content.appendChild(node));
+    section.appendChild(content);
+
+    const setCollapsed = (collapsed) => {
+      section.classList.toggle('is-collapsed', collapsed);
+      title.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+    };
+
+    title.classList.add('section-title--toggle');
+    title.setAttribute('role', 'button');
+    title.setAttribute('tabindex', '0');
+    title.setAttribute('aria-expanded', 'true');
+
+    const onToggle = () => setCollapsed(!section.classList.contains('is-collapsed'));
+    title.addEventListener('click', onToggle);
+    title.addEventListener('keydown', (ev) => {
+      if (ev.key !== 'Enter' && ev.key !== ' ') return;
+      ev.preventDefault();
+      onToggle();
+    });
+
+    section.dataset.collapsibleInit = '1';
+  });
+};
