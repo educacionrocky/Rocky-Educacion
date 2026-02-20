@@ -97,7 +97,7 @@ let unsubRoleMatrix=null; let unsubUserOverrides=null; let unsubAudit=null;
   }
 
   addRoute('/login', ()=> Login(root, deps));
-  addRoute('/', ()=> requireAuth(()=> Home(root)));
+  addRoute('/', ()=> requireAuth(()=> Home(root, deps)));
   addRoute('/about', ()=> requireAuth(()=> About(root)));
   addRoute('/settings', ()=> requireAuth(()=> Settings(root)));
   addRoute('/notes', ()=> requireAuth(()=> Notes(root)));
