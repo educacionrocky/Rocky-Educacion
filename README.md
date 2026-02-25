@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # RockyPro â€” **v5.2 Allâ€‘inâ€‘One**
 
 **Integrado completo** (como v4) + **CRUD de Dependencias** con **cÃ³digo automÃ¡tico**. Incluye:
@@ -27,3 +28,6 @@ Consulta y pega el contenido de `firestore.rules` en la consola de Firestore.
 2) Crear cuenta / iniciar sesiÃ³n (`#/login`).
 3) Asignar `role` a tu usuario en `#/users` (admin o superadmin).
 4) Probar `#/zones` y `#/dependencies` para ver cÃ³digos automÃ¡ticos y CRUD.
+=======
+# Rocky-Educacion
+>>>>>>> 690e2e041413ab6b065332a8eb1c01e742fba46d
