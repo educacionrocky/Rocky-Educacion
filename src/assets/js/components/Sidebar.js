@@ -14,7 +14,7 @@ export const Sidebar = () => {
   });
   brandImg.addEventListener('error', () => {
     brandImg.classList.add('hidden');
-    brandText.textContent = 'RockyPro';
+    brandText.textContent = 'RockyEDU';
   });
   const top = el('div', { className: 'sidebar__top' }, [
     el('div', { className: 'sidebar__brand' }, [brandImg, brandText]),
@@ -66,6 +66,9 @@ export const Sidebar = () => {
   container.replaceChildren(top, ...sections);
 
   const btn = qs('#btnCollapse', container);
+  const initialCollapsed = getSidebarCollapsedPref();
+  applySidebarCollapsed(initialCollapsed);
+
   const syncCollapseBtn = () => {
     const aside = document.getElementById('app-sidebar');
     const collapsed = aside?.getAttribute('data-collapsed') === 'true';
@@ -76,7 +79,9 @@ export const Sidebar = () => {
   btn.addEventListener('click', () => {
     const aside = document.getElementById('app-sidebar');
     const collapsed = aside.getAttribute('data-collapsed') === 'true';
-    aside.setAttribute('data-collapsed', collapsed ? 'false' : 'true');
+    const nextCollapsed = !collapsed;
+    applySidebarCollapsed(nextCollapsed);
+    setSidebarCollapsedPref(nextCollapsed);
     syncCollapseBtn();
   });
 
@@ -107,9 +112,13 @@ function section(title, links, key) {
 }
 
 function navLink(text, to) {
+  const iconLabel = getNavIconLabel(to);
   const a = el('a', { href: `#${to}`, className: 'sidebar__nav-link' }, [
+    el('span', { className: 'sidebar__item-icon', 'aria-hidden': 'true' }, [iconLabel]),
     el('span', { className: 'sidebar__item-text' }, [text])
   ]);
+  a.title = text;
+  a.setAttribute('aria-label', text);
   a.addEventListener('click', (e) => {
     e.preventDefault();
     navigate(to);
@@ -131,4 +140,50 @@ function setSectionPref(key, collapsed) {
   try {
     localStorage.setItem(`sidebar_sec_${key}`, collapsed ? '1' : '0');
   } catch (_) {}
+}
+
+function getNavIconLabel(route) {
+  const map = {
+    '/permissions': 'CP',
+    '/users': 'US',
+    '/zones': 'ZN',
+    '/dependencies': 'DP',
+    '/sedes': 'SD',
+    '/cargos': 'CG',
+    '/novedades': 'NV',
+    '/employees': 'EM',
+    '/supervisors': 'SP',
+    '/supernumerarios': 'SN',
+    '/bulk-upload-sedes': 'BS',
+    '/bulk-upload': 'BE',
+    '/bulk-upload-supernumerarios': 'BN',
+    '/imports': 'IM',
+    '/import-history': 'HI',
+    '/payroll': 'NO',
+    '/absenteeism': 'AU',
+    '/reports': 'RP',
+    '/upload': 'CD'
+  };
+  return map[route] || '>>';
+}
+
+function getSidebarCollapsedPref() {
+  try {
+    return localStorage.getItem('sidebar_collapsed') === '1';
+  } catch (_) {
+    return false;
+  }
+}
+
+function setSidebarCollapsedPref(collapsed) {
+  try {
+    localStorage.setItem('sidebar_collapsed', collapsed ? '1' : '0');
+  } catch (_) {}
+}
+
+function applySidebarCollapsed(collapsed) {
+  const aside = document.getElementById('app-sidebar');
+  const layout = document.querySelector('.app-layout');
+  if (aside) aside.setAttribute('data-collapsed', collapsed ? 'true' : 'false');
+  if (layout) layout.setAttribute('data-sidebar-collapsed', collapsed ? 'true' : 'false');
 }

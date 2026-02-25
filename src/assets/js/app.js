@@ -3,8 +3,8 @@ import { Footer } from './components/Footer.js';
 import { Sidebar } from './components/Sidebar.js';
 
 import { Home } from './components/Home.js';
+import { Contact } from './components/Contact.js';
 import { About } from './components/About.js';
-import { Settings } from './components/Settings.js';
 import { Login } from './components/Login.js';
 import { Notes } from './components/Notes.js';
 
@@ -98,8 +98,8 @@ let unsubRoleMatrix=null; let unsubUserOverrides=null; let unsubAudit=null;
 
   addRoute('/login', ()=> Login(root, deps));
   addRoute('/', ()=> requireAuth(()=> Home(root, deps)));
+  addRoute('/contact', ()=> requireAuth(()=> Contact(root)));
   addRoute('/about', ()=> requireAuth(()=> About(root)));
-  addRoute('/settings', ()=> requireAuth(()=> Settings(root)));
   addRoute('/notes', ()=> requireAuth(()=> Notes(root)));
 
   // Gobierno
@@ -136,4 +136,4 @@ let unsubRoleMatrix=null; let unsubUserOverrides=null; let unsubAudit=null;
 })();
 function requireAuth(ok){ const { user }=getState(); if(!user){ navigate('/login'); return; } return ok?.(); }
 function guard(perm, ok){ if(!can(perm)) return block('No tienes permiso para acceder a esta sección.'); return ok?.(); }
-function block(text){ const div=document.createElement('div'); div.className='main-card'; div.innerHTML=`<h2 style="margin:0 0 .5rem 0;">RockyPro</h2><p>${text}</p>`; root.replaceChildren(div); return null; }
+function block(text){ const div=document.createElement('div'); div.className='main-card'; div.innerHTML=`<h2 style="margin:0 0 .5rem 0;">RockyEDU</h2><p>${text}</p>`; root.replaceChildren(div); return null; }

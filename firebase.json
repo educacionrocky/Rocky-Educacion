@@ -1,4 +1,7 @@
 {
+  "functions": {
+    "source": "functions"
+  },
   "hosting": {
     "public": ".",
     "ignore": [
@@ -14,6 +17,13 @@
       "**/node_modules/**"
     ],
     "rewrites": [
+      {
+        "source": "/api/contact",
+        "function": {
+          "functionId": "sendContactEmail",
+          "region": "us-central1"
+        }
+      },
       {
         "source": "**",
         "destination": "/index.html"

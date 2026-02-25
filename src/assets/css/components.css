@@ -33,6 +33,14 @@
 .sidebar__nav-link{display:flex;align-items:center;gap:.5rem;padding:.5rem .6rem;border-radius:8px;color:var(--sidebar-fg)}
 .sidebar__nav-link:hover{background:var(--sidebar-hover)}
 .sidebar__nav-link.is-active{background:var(--sidebar-active);color:#fff}
+.sidebar__item-icon{width:26px;height:26px;display:inline-flex;align-items:center;justify-content:center;border-radius:999px;background:color-mix(in srgb,var(--sidebar-fg) 18%, transparent);border:1px solid color-mix(in srgb,var(--sidebar-fg) 34%, transparent);font-size:.68rem;font-weight:700;letter-spacing:.02em;flex:0 0 26px}
+.sidebar[data-collapsed="true"] .sidebar__section-title{display:none}
+.sidebar[data-collapsed="true"] .sidebar__section-toggle{display:none}
+.sidebar[data-collapsed="true"] .sidebar__section{margin-top:.5rem}
+.sidebar[data-collapsed="true"] .sidebar__nav{gap:.35rem}
+.sidebar[data-collapsed="true"] .sidebar__section.is-collapsed .sidebar__nav{display:flex}
+.sidebar[data-collapsed="true"] .sidebar__item-text{display:none}
+.sidebar[data-collapsed="true"] .sidebar__nav-link{justify-content:center;padding:.45rem .3rem}
 
 /* Header navigation */
 .header-nav{display:flex;align-items:center;gap:.75rem;padding:.6rem 0}
@@ -43,6 +51,7 @@
 .header .header-btn:hover{background:color-mix(in srgb,var(--header-fg) 18%, transparent)}
 .header .btn--primary.header-btn{border-color:transparent;background:var(--color-accent);color:#fff}
 .header .btn--primary.header-btn:hover{background:color-mix(in srgb,var(--color-accent) 88%, #000)}
+.header-theme-btn{width:36px;height:36px;padding:0;border-radius:999px;font-size:1rem;line-height:1}
 
 /* Tabs */
 .tabs{display:flex;gap:.4rem;border-bottom:1px solid var(--color-border); margin-bottom:.8rem;}
@@ -71,3 +80,8 @@
 .section-content{display:block}
 .section-block.is-collapsed .section-content{display:none}
 .section-block.is-collapsed .section-title--toggle::after{transform:rotate(-90deg)}
+
+/* Footer */
+.footer-brand{display:flex;align-items:center;gap:.4rem;flex-wrap:wrap}
+.footer-brand__logo{width:28px;height:28px;object-fit:contain}
+.footer-brand__name{color:#0f5fa8;font-weight:700;letter-spacing:.02em}
