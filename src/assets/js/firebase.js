@@ -4,12 +4,12 @@ import { getAuth, onAuthStateChanged, signInWithEmailAndPassword, createUserWith
 import { getFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, collection, addDoc, getDocs, onSnapshot, query, orderBy, where, serverTimestamp, limit, runTransaction, writeBatch } from 'https://www.gstatic.com/firebasejs/12.9.0/firebase-firestore.js';
 
 export const firebaseConfig = {
-  apiKey: "AIzaSyC2S2kMvBP4rMIeVRLgmQ3TcwrG7SZXKCY",
-  authDomain: "rockypro-98390.firebaseapp.com",
-  projectId: "rockypro-98390",
-  storageBucket: "rockypro-98390.firebasestorage.app",
-  messagingSenderId: "891421432235",
-  appId: "1:891421432235:web:151ff4cb0ebf4c01ff1aee"
+  apiKey: "AIzaSyAkZJuves5WDo3QA5JJ3qlb5Lb_D5j1FPE",
+  authDomain: "educacion-rocky.firebaseapp.com",
+  projectId: "educacion-rocky",
+  storageBucket: "educacion-rocky.firebasestorage.app",
+  messagingSenderId: "559391413242",
+  appId: "1:559391413242:web:ae81a5497f498d0fd40a43"
 };
 
 const app = initializeApp(firebaseConfig);
