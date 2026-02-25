@@ -1,4 +1,6 @@
 import { el, qs } from '../utils/dom.js';
+import { showInfoModal } from '../utils/infoModal.js';
+import { showActionModal } from '../utils/actionModal.js';
 export const SedesAdmin=(mount,deps={})=>{
   const ui=el('section',{className:'main-card'},[
     el('h2',{},['Sedes']),
@@ -40,8 +42,6 @@ export const SedesAdmin=(mount,deps={})=>{
             el('th',{'data-sort':'numeroOperarios',style:'cursor:pointer'},['Operarios']),
             el('th',{'data-sort':'jornada',style:'cursor:pointer'},['Jornada']),
             el('th',{'data-sort':'estado',style:'cursor:pointer'},['Estado']),
-            el('th',{'data-sort':'createdByEmail',style:'cursor:pointer'},['Creado por']),
-            el('th',{'data-sort':'createdAt',style:'cursor:pointer'},['Creacion']),
             el('th',{},['Acciones'])
           ]) ]),
           el('tbody',{})
@@ -203,11 +203,9 @@ export const SedesAdmin=(mount,deps={})=>{
     const tdOps=el('td',{},[ String(s.numeroOperarios ?? '-') ]);
     const tdJornada=el('td',{},[ labelJornada(s.jornada) ]);
     const tdEstado=el('td',{},[ statusBadge(s.estado) ]);
-    const tdActor=el('td',{},[ s.createdByEmail||s.createdByUid||'-' ]);
-    const tdFecha=el('td',{},[ formatDate(s.createdAt) ]);
     const tdAcc=el('td',{},[ actionsCell(s) ]);
     tr.addEventListener('dblclick',()=> startEdit(tr,s));
-    tr.append(tdCodigo,tdNombre,tdDep,tdZone,tdOps,tdJornada,tdEstado,tdActor,tdFecha,tdAcc);
+    tr.append(tdCodigo,tdNombre,tdDep,tdZone,tdOps,tdJornada,tdEstado,tdAcc);
     return tr;
   }
   function labelJornada(v){
@@ -217,6 +215,14 @@ export const SedesAdmin=(mount,deps={})=>{
   }
   function statusBadge(st){ return el('span',{className:'badge '+(st==='activo'?'badge--ok':'badge--off')},[st||'-']); }
   function formatDate(ts){ try{ const d=ts?.toDate? ts.toDate(): (ts? new Date(ts): null); return d? new Date(d).toLocaleString(): '-'; }catch{ return '-'; } }
+  function auditInfoData(s){
+    const hasMod = Boolean(s.lastModifiedAt || s.lastModifiedByEmail || s.lastModifiedByUid);
+    return {
+      action: hasMod ? 'Ultima modificacion' : 'Creacion',
+      user: hasMod ? (s.lastModifiedByEmail||s.lastModifiedByUid||'-') : (s.createdByEmail||s.createdByUid||'-'),
+      date: hasMod ? formatDate(s.lastModifiedAt) : formatDate(s.createdAt)
+    };
+  }
   function actionsCell(s){
     const box=el('div',{className:'row-actions'},[]);
     const btnEdit=el('button',{className:'btn'},['Editar']);
@@ -224,10 +230,18 @@ export const SedesAdmin=(mount,deps={})=>{
     const btnToggle=el('button',{className:'btn '+(s.estado==='activo'?'btn--danger':'' )},[ s.estado==='activo'?'Desactivar':'Activar' ]);
     btnToggle.addEventListener('click',async()=>{
       const target=s.estado==='activo'?'inactivo':'activo';
-      if(!window.confirm(`${s.estado==='activo'?'Desactivar':'Activar'} sede "${s.nombre}"?`)) return;
-      try{ await deps.setSedeStatus?.(s.id,target); await deps.addAuditLog?.({ targetType:'sede', targetId:s.id, action: target==='activo'?'activate_sede':'deactivate_sede', before:{estado:s.estado}, after:{estado:target} }); }catch(e){ alert('Error: '+(e?.message||e)); }
+      const modal=await showActionModal({
+        title:`${target==='inactivo'?'Desactivar':'Activar'} sede`,
+        message:`Sede: ${s.nombre||'-'}`,
+        confirmText:target==='inactivo'?'Desactivar':'Activar',
+        fields:[{ id:'detail', label:'Detalle', type:'textarea', required:true, placeholder:'Escribe el motivo o detalle de esta accion' }]
+      });
+      if(!modal.confirmed) return;
+      try{ await deps.setSedeStatus?.(s.id,target); await deps.addAuditLog?.({ targetType:'sede', targetId:s.id, action: target==='activo'?'activate_sede':'deactivate_sede', before:{estado:s.estado}, after:{estado:target}, note: modal.values.detail||null }); }catch(e){ alert('Error: '+(e?.message||e)); }
     });
-    box.append(btnEdit,btnToggle); return box;
+    const btnInfo=el('button',{className:'btn',title:'Ver informacion del registro','aria-label':'Ver informacion del registro'},['ⓘ']);
+    btnInfo.addEventListener('click',()=>{ const info=auditInfoData(s); showInfoModal('Informacion del registro',[`Evento: ${info.action}`,`Usuario: ${info.user}`,`Fecha: ${info.date}`]); });
+    box.append(btnEdit,btnToggle,btnInfo); return box;
   }
   function startEdit(tr,s){
     const cur={
@@ -250,8 +264,6 @@ export const SedesAdmin=(mount,deps={})=>{
       el('option',{value:'lun_dom',selected:cur.jornada==='lun_dom'},['Lunes a domingo'])
     ]));
     tds[6].replaceChildren(statusBadge(s.estado));
-    tds[7].textContent=s.createdByEmail||s.createdByUid||'-';
-    tds[8].textContent=formatDate(s.createdAt);
     const box=el('div',{className:'row-actions'},[]);
     const btnSave=el('button',{className:'btn btn--primary'},['Guardar']);
     const btnCancel=el('button',{className:'btn'},['Cancelar']);
@@ -266,6 +278,13 @@ export const SedesAdmin=(mount,deps={})=>{
       if(!newDepCode||!newZoneCode) return alert('Selecciona dependencia y zona.');
       const newOps=Number(newOpsRaw);
       if(!Number.isFinite(newOps) || newOps<0 || !Number.isInteger(newOps)) return alert('Ingresa un numero entero de operarios valido.');
+      const modal=await showActionModal({
+        title:'Confirmar modificacion',
+        message:`Sede: ${s.nombre||'-'}`,
+        confirmText:'Guardar cambios',
+        fields:[{ id:'detail', label:'Detalle de la modificacion', type:'textarea', required:true, placeholder:'Describe brevemente el cambio realizado' }]
+      });
+      if(!modal.confirmed) return;
       try{
         if(newCode!==s.codigo){ const dup=await deps.findSedeByCode?.(newCode); if(dup && dup.id!==s.id) return alert('Ya existe una sede con ese codigo.'); }
         const newDep=depList.find(d=>d.codigo===newDepCode);
@@ -280,11 +299,11 @@ export const SedesAdmin=(mount,deps={})=>{
           numeroOperarios:newOps,
           jornada:newJornada||'lun_vie'
         });
-        await deps.addAuditLog?.({ targetType:'sede', targetId:s.id, action:'update_sede', before:{ codigo:s.codigo, nombre:s.nombre, dependenciaCodigo:s.dependenciaCodigo, zonaCodigo:s.zonaCodigo, numeroOperarios:s.numeroOperarios, jornada:s.jornada||'lun_vie' }, after:{ codigo:newCode, nombre:newName, dependenciaCodigo:newDepCode, zonaCodigo:newZoneCode, numeroOperarios:newOps, jornada:newJornada||'lun_vie' } });
+        await deps.addAuditLog?.({ targetType:'sede', targetId:s.id, action:'update_sede', before:{ codigo:s.codigo, nombre:s.nombre, dependenciaCodigo:s.dependenciaCodigo, zonaCodigo:s.zonaCodigo, numeroOperarios:s.numeroOperarios, jornada:s.jornada||'lun_vie' }, after:{ codigo:newCode, nombre:newName, dependenciaCodigo:newDepCode, zonaCodigo:newZoneCode, numeroOperarios:newOps, jornada:newJornada||'lun_vie' }, note: modal.values.detail||null });
       }catch(e){ alert('Error: '+(e?.message||e)); }
     });
     btnCancel.addEventListener('click',()=> render());
-    box.append(btnSave,btnCancel); tds[9].replaceChildren(box);
+    box.append(btnSave,btnCancel); tds[7].replaceChildren(box);
   }
   qs('#txtSearch',ui).addEventListener('input',render);
   qs('#selStatus',ui).addEventListener('change',render);

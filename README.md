@@ -1,16 +1,16 @@
 <<<<<<< HEAD
-# RockyPro â€” **v5.2 Allâ€‘inâ€‘One**
+# RockyEDU v1.0.1.
 
-**Integrado completo** (como v4) + **CRUD de Dependencias** con **cÃ³digo automÃ¡tico**. Incluye:
-- Login primero (pestaÃ±as Acceso/Crear cuenta)
+automatico. Incluye:
+- Login primero (pestanas Acceso/Crear cuenta)
 - Centro de Permisos v2 (bloqueo de SuperAdmin, confirmaciones, auditorÃ­a before/after)
-- GestiÃ³n de usuarios (cambio de rol)
-- **Zonas (CRUD)** con **cÃ³digo automÃ¡tico**: `ZON-0001`, `ZON-0002`, â€¦
+- Gestion de usuarios (cambio de rol)
+- **Zonas (CRUD)** con **codigo automatico**: `ZON-0001`, `ZON-0002`, â€¦
 - **Dependencias (CRUD)** con **cÃ³digo automÃ¡tico**: `DEP-0001`, `DEP-0002`, â€¦
 - Stubs: Sedes, Empleados, Supervisores, Import history, NÃ³mina, Ausentismo, Reportes, Carga de datos
 
 ## Firebase
-ConfiguraciÃ³n integrada (rockypro-98390) en `src/assets/js/firebase.js`.
+Configuración integrada (educacion-rocky) en `src/assets/js/firebase.js`.
 
 ## Reglas Firestore (desarrollo sugeridas)
 Consulta y pega el contenido de `firestore.rules` en la consola de Firestore.

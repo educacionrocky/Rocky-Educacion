@@ -1,4 +1,6 @@
 import { el, qs } from '../utils/dom.js';
+import { showInfoModal } from '../utils/infoModal.js';
+import { showActionModal } from '../utils/actionModal.js';
 export const SupervisorsAdmin=(mount,deps={})=>{
   const ui=el('section',{className:'main-card'},[
     el('h2',{},['Supervisores']),
@@ -33,7 +35,6 @@ export const SupervisorsAdmin=(mount,deps={})=>{
             el('th',{'data-sort':'estado',style:'cursor:pointer'},['Estado']),
             el('th',{'data-sort':'fechaIngreso',style:'cursor:pointer'},['Ingreso']),
             el('th',{'data-sort':'fechaRetiro',style:'cursor:pointer'},['Retiro']),
-            el('th',{'data-sort':'lastModifiedByEmail',style:'cursor:pointer'},['Modificado por']),
             el('th',{},['Acciones'])
           ]) ]),
           el('tbody',{})
@@ -139,10 +140,9 @@ export const SupervisorsAdmin=(mount,deps={})=>{
     const tdEstado=el('td',{},[ statusBadge(s.estado) ]);
     const tdIngreso=el('td',{},[ formatDate(s.fechaIngreso) ]);
     const tdRetiro=el('td',{},[ formatDate(s.fechaRetiro) ]);
-    const tdMod=el('td',{},[ s.lastModifiedByEmail||s.lastModifiedByUid||'-' ]);
     const tdAcc=el('td',{},[ actionsCell(s) ]);
     tr.addEventListener('dblclick',()=> startEdit(tr,s));
-    tr.append(tdCodigo,tdDoc,tdNombre,tdZona,tdEstado,tdIngreso,tdRetiro,tdMod,tdAcc);
+    tr.append(tdCodigo,tdDoc,tdNombre,tdZona,tdEstado,tdIngreso,tdRetiro,tdAcc);
     return tr;
   }
   function statusBadge(st){ return el('span',{className:'badge '+(st==='activo'?'badge--ok':'badge--off')},[st||'-']); }
@@ -152,6 +152,20 @@ export const SupervisorsAdmin=(mount,deps={})=>{
       return d? new Date(d).toLocaleDateString(): '-';
     }catch{ return '-'; }
   }
+  function formatDateTime(ts){
+    try{
+      const d=ts?.toDate? ts.toDate(): (ts? new Date(ts): null);
+      return d? new Date(d).toLocaleString(): '-';
+    }catch{ return '-'; }
+  }
+  function auditInfoData(s){
+    const hasMod = Boolean(s.lastModifiedAt || s.lastModifiedByEmail || s.lastModifiedByUid);
+    return {
+      action: hasMod ? 'Ultima modificacion' : 'Creacion',
+      user: hasMod ? (s.lastModifiedByEmail||s.lastModifiedByUid||'-') : (s.createdByEmail||s.createdByUid||'-'),
+      date: hasMod ? formatDateTime(s.lastModifiedAt) : formatDateTime(s.createdAt)
+    };
+  }
   function actionsCell(s){
     const box=el('div',{className:'row-actions'},[]);
     const btnEdit=el('button',{className:'btn'},['Editar']);
@@ -159,23 +173,32 @@ export const SupervisorsAdmin=(mount,deps={})=>{
     const btnToggle=el('button',{className:'btn '+(s.estado==='activo'?'btn--danger':'' )},[ s.estado==='activo'?'Desactivar':'Activar' ]);
     btnToggle.addEventListener('click',async()=>{
       const target=s.estado==='activo'?'inactivo':'activo';
-      if(!window.confirm(`${s.estado==='activo'?'Desactivar':'Activar'} supervisor "${s.nombre}"?`)) return;
       try{
         let retiroDate=null;
+        const suggested=toInputDate(new Date()) || '';
+        const modal=await showActionModal({
+          title:`${target==='inactivo'?'Desactivar':'Activar'} supervisor`,
+          message:`Supervisor: ${s.nombre||'-'}`,
+          confirmText:target==='inactivo'?'Desactivar':'Activar',
+          fields:[
+            ...(target==='inactivo' ? [{ id:'retiroDate', label:'Fecha de retiro', type:'date', required:true, value:suggested }] : []),
+            { id:'detail', label:'Detalle', type:'textarea', required:true, placeholder:'Escribe el motivo o detalle de esta accion' }
+          ]
+        });
+        if(!modal.confirmed) return;
         if(target==='inactivo'){
-          const suggested=toInputDate(new Date()) || '';
-          const retiroInput=window.prompt('Fecha de retiro (AAAA-MM-DD):', suggested);
-          if(retiroInput===null) return;
-          const retiro=String(retiroInput||'').trim();
+          const retiro=String(modal.values.retiroDate||'').trim();
           if(!/^\d{4}-\d{2}-\d{2}$/.test(retiro)) return alert('Fecha invalida. Usa formato AAAA-MM-DD.');
           retiroDate=new Date(`${retiro}T00:00:00`);
           if(Number.isNaN(retiroDate.getTime())) return alert('Fecha invalida.');
         }
         await deps.setSupervisorStatus?.(s.id,target,retiroDate);
-        await deps.addAuditLog?.({ targetType:'supervisor', targetId:s.id, action: target==='activo'?'activate_supervisor':'deactivate_supervisor', before:{estado:s.estado, fechaRetiro:s.fechaRetiro||null}, after:{estado:target, fechaRetiro:retiroDate||null} });
+        await deps.addAuditLog?.({ targetType:'supervisor', targetId:s.id, action: target==='activo'?'activate_supervisor':'deactivate_supervisor', before:{estado:s.estado, fechaRetiro:s.fechaRetiro||null}, after:{estado:target, fechaRetiro:retiroDate||null}, note: modal.values.detail||null });
       }catch(err){ alert('Error: '+(err?.message||err)); }
     });
-    box.append(btnEdit,btnToggle); return box;
+    const btnInfo=el('button',{className:'btn',title:'Ver informacion del registro','aria-label':'Ver informacion del registro'},['ⓘ']);
+    btnInfo.addEventListener('click',()=>{ const info=auditInfoData(s); showInfoModal('Informacion del registro',[`Evento: ${info.action}`,`Usuario: ${info.user}`,`Fecha: ${info.date}`]); });
+    box.append(btnEdit,btnToggle,btnInfo); return box;
   }
   function startEdit(tr,s){
     const cur={
@@ -194,7 +217,6 @@ export const SupervisorsAdmin=(mount,deps={})=>{
     tds[4].replaceChildren(statusBadge(s.estado));
     tds[5].replaceChildren(el('input',{className:'input',type:'date',value:cur.fechaIngreso||''}));
     tds[6].replaceChildren(el('input',{className:'input',type:'date',value:cur.fechaRetiro||''}));
-    tds[7].textContent=s.lastModifiedByEmail||s.lastModifiedByUid||'-';
     const box=el('div',{className:'row-actions'},[]);
     const btnSave=el('button',{className:'btn btn--primary'},['Guardar']);
     const btnCancel=el('button',{className:'btn'},['Cancelar']);
@@ -209,6 +231,13 @@ export const SupervisorsAdmin=(mount,deps={})=>{
       if(!newZoneCode) return alert('Selecciona una zona.');
       if(!newIngreso) return alert('Selecciona la fecha de ingreso.');
       if(s.estado==='inactivo' && !newRetiro) return alert('Para supervisores inactivos, la fecha de retiro es obligatoria.');
+      const modal=await showActionModal({
+        title:'Confirmar modificacion',
+        message:`Supervisor: ${s.nombre||'-'}`,
+        confirmText:'Guardar cambios',
+        fields:[{ id:'detail', label:'Detalle de la modificacion', type:'textarea', required:true, placeholder:'Describe brevemente el cambio realizado' }]
+      });
+      if(!modal.confirmed) return;
       try{
         if(newCode!==s.codigo){ const dup=await deps.findSupervisorByCode?.(newCode); if(dup && dup.id!==s.id) return alert('Ya existe un supervisor con ese codigo.'); }
         if(newDoc!==s.documento){ const dupDoc=await deps.findSupervisorByDocument?.(newDoc); if(dupDoc && dupDoc.id!==s.id) return alert('Ya existe un supervisor con ese documento.'); }
@@ -222,11 +251,11 @@ export const SupervisorsAdmin=(mount,deps={})=>{
           fechaIngreso: new Date(`${newIngreso}T00:00:00`),
           fechaRetiro: newRetiro ? new Date(`${newRetiro}T00:00:00`) : null
         });
-        await deps.addAuditLog?.({ targetType:'supervisor', targetId:s.id, action:'update_supervisor', before:{ codigo:s.codigo, documento:s.documento, nombre:s.nombre, zonaCodigo:s.zonaCodigo, fechaRetiro:s.fechaRetiro||null }, after:{ codigo:newCode, documento:newDoc, nombre:newName, zonaCodigo:newZoneCode, fechaRetiro:newRetiro||null } });
+        await deps.addAuditLog?.({ targetType:'supervisor', targetId:s.id, action:'update_supervisor', before:{ codigo:s.codigo, documento:s.documento, nombre:s.nombre, zonaCodigo:s.zonaCodigo, fechaRetiro:s.fechaRetiro||null }, after:{ codigo:newCode, documento:newDoc, nombre:newName, zonaCodigo:newZoneCode, fechaRetiro:newRetiro||null }, note: modal.values.detail||null });
       }catch(err){ alert('Error: '+(err?.message||err)); }
     });
     btnCancel.addEventListener('click',()=> render());
-    box.append(btnSave,btnCancel); tds[8].replaceChildren(box);
+    box.append(btnSave,btnCancel); tds[7].replaceChildren(box);
   }
   function toInputDate(ts){
     try{

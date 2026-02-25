@@ -1,4 +1,6 @@
 import { el, qs } from '../utils/dom.js';
+import { showInfoModal } from '../utils/infoModal.js';
+import { showActionModal } from '../utils/actionModal.js';
 export const SupernumerariosAdmin=(mount,deps={})=>{
   const ui=el('section',{className:'main-card'},[
     el('h2',{},['Supernumerarios']),
@@ -38,7 +40,6 @@ export const SupernumerariosAdmin=(mount,deps={})=>{
             el('th',{'data-sort':'estado',style:'cursor:pointer'},['Estado']),
             el('th',{'data-sort':'fechaIngreso',style:'cursor:pointer'},['Ingreso']),
             el('th',{'data-sort':'fechaRetiro',style:'cursor:pointer'},['Retiro']),
-            el('th',{'data-sort':'lastModifiedByEmail',style:'cursor:pointer'},['Modificado por']),
             el('th',{},['Acciones'])
           ]) ]),
           el('tbody',{})
@@ -215,10 +216,9 @@ export const SupernumerariosAdmin=(mount,deps={})=>{
     const tdEstado=el('td',{},[ statusBadge(e.estado) ]);
     const tdIngreso=el('td',{},[ formatDate(e.fechaIngreso) ]);
     const tdRetiro=el('td',{},[ formatDate(e.fechaRetiro) ]);
-    const tdMod=el('td',{},[ e.lastModifiedByEmail||e.lastModifiedByUid||'-' ]);
     const tdAcc=el('td',{},[ actionsCell(e) ]);
     tr.addEventListener('dblclick',()=> startEdit(tr,e));
-    tr.append(tdCodigo,tdDoc,tdNombre,tdTel,tdCargo,tdSede,tdEstado,tdIngreso,tdRetiro,tdMod,tdAcc);
+    tr.append(tdCodigo,tdDoc,tdNombre,tdTel,tdCargo,tdSede,tdEstado,tdIngreso,tdRetiro,tdAcc);
     return tr;
   }
   function statusBadge(st){ return el('span',{className:'badge '+(st==='activo'?'badge--ok':'badge--off')},[st||'-']); }
@@ -228,6 +228,20 @@ export const SupernumerariosAdmin=(mount,deps={})=>{
       return d? new Date(d).toLocaleDateString(): '-';
     }catch{ return '-'; }
   }
+  function formatDateTime(ts){
+    try{
+      const d=ts?.toDate? ts.toDate(): (ts? new Date(ts): null);
+      return d? new Date(d).toLocaleString(): '-';
+    }catch{ return '-'; }
+  }
+  function auditInfoData(e){
+    const hasMod = Boolean(e.lastModifiedAt || e.lastModifiedByEmail || e.lastModifiedByUid);
+    return {
+      action: hasMod ? 'Ultima modificacion' : 'Creacion',
+      user: hasMod ? (e.lastModifiedByEmail||e.lastModifiedByUid||'-') : (e.createdByEmail||e.createdByUid||'-'),
+      date: hasMod ? formatDateTime(e.lastModifiedAt) : formatDateTime(e.createdAt)
+    };
+  }
   function actionsCell(e){
     const box=el('div',{className:'row-actions'},[]);
     const btnEdit=el('button',{className:'btn'},['Editar']);
@@ -235,26 +249,29 @@ export const SupernumerariosAdmin=(mount,deps={})=>{
     const btnToggle=el('button',{className:'btn '+(e.estado==='activo'?'btn--danger':'' )},[ e.estado==='activo'?'Desactivar':'Activar' ]);
     btnToggle.addEventListener('click',async()=>{
       const target=e.estado==='activo'?'inactivo':'activo';
-      if(!window.confirm(`${e.estado==='activo'?'Desactivar':'Activar'} supernumerario "${e.nombre}"?`)) return;
       try{
         let retiroDate=null;
         let motivoEstado=null;
         let syncEmployee=true;
+        const suggested=toInputDate(new Date()) || '';
+        const modal=await showActionModal({
+          title:`${target==='inactivo'?'Desactivar':'Activar'} supernumerario`,
+          message:`Supernumerario: ${e.nombre||'-'}`,
+          confirmText:target==='inactivo'?'Desactivar':'Activar',
+          fields:[
+            ...(target==='inactivo' ? [{ id:'retiroDate', label:'Fecha de retiro', type:'date', required:true, value:suggested }, { id:'motivo', label:'Motivo', type:'select', required:true, value:'T', options:[{ value:'T', label:'Traslado a Empleado' }, { value:'R', label:'Retiro' }] }] : []),
+            { id:'detail', label:'Detalle', type:'textarea', required:true, placeholder:'Escribe el motivo o detalle de esta accion' }
+          ]
+        });
+        if(!modal.confirmed) return;
         if(target==='inactivo'){
-          const suggested=toInputDate(new Date()) || '';
-          const retiroInput=window.prompt('Fecha de retiro (AAAA-MM-DD):', suggested);
-          if(retiroInput===null) return;
-          const retiro=String(retiroInput||'').trim();
+          const retiro=String(modal.values.retiroDate||'').trim();
           if(!/^\d{4}-\d{2}-\d{2}$/.test(retiro)) return alert('Fecha invalida. Usa formato AAAA-MM-DD.');
           retiroDate=new Date(`${retiro}T00:00:00`);
           if(Number.isNaN(retiroDate.getTime())) return alert('Fecha invalida.');
-
-          const motivoInput=window.prompt('Motivo: T=Traslado a Empleado, R=Retiro', 'T');
-          if(motivoInput===null) return;
-          const motivoNorm=String(motivoInput||'').trim().toUpperCase();
+          const motivoNorm=String(modal.values.motivo||'').trim().toUpperCase();
           if(motivoNorm!=='T' && motivoNorm!=='R') return alert('Motivo invalido. Usa T o R.');
           motivoEstado = motivoNorm==='T' ? 'traslado_empleado' : 'retiro';
-          // En traslado se mantiene el registro de empleados sin inactivarlo.
           syncEmployee = motivoEstado!=='traslado_empleado';
         }
         await deps.setSupernumerarioStatus?.(e.id,target,retiroDate,{ syncEmployee, motivoEstado });
@@ -263,11 +280,14 @@ export const SupernumerariosAdmin=(mount,deps={})=>{
           targetId:e.id,
           action: target==='activo'?'activate_supernumerario':'deactivate_supernumerario',
           before:{estado:e.estado, fechaRetiro:e.fechaRetiro||null, motivoEstado:e.motivoEstado||null},
-          after:{estado:target, fechaRetiro:retiroDate||null, motivoEstado:motivoEstado||null}
+          after:{estado:target, fechaRetiro:retiroDate||null, motivoEstado:motivoEstado||null},
+          note: modal.values.detail||null
         });
       }catch(err){ alert('Error: '+(err?.message||err)); }
     });
-    box.append(btnEdit,btnToggle); return box;
+    const btnInfo=el('button',{className:'btn',title:'Ver informacion del registro','aria-label':'Ver informacion del registro'},['ⓘ']);
+    btnInfo.addEventListener('click',()=>{ const info=auditInfoData(e); showInfoModal('Informacion del registro',[`Evento: ${info.action}`,`Usuario: ${info.user}`,`Fecha: ${info.date}`]); });
+    box.append(btnEdit,btnToggle,btnInfo); return box;
   }
   function startEdit(tr,e){
     const cur={
@@ -290,7 +310,6 @@ export const SupernumerariosAdmin=(mount,deps={})=>{
     tds[6].replaceChildren(statusBadge(e.estado));
     tds[7].replaceChildren(el('input',{className:'input',type:'date',value:cur.fechaIngreso||''}));
     tds[8].replaceChildren(el('input',{className:'input',type:'date',value:cur.fechaRetiro||''}));
-    tds[9].textContent=e.lastModifiedByEmail||e.lastModifiedByUid||'-';
     const box=el('div',{className:'row-actions'},[]);
     const btnSave=el('button',{className:'btn btn--primary'},['Guardar']);
     const btnCancel=el('button',{className:'btn'},['Cancelar']);
@@ -308,6 +327,13 @@ export const SupernumerariosAdmin=(mount,deps={})=>{
       if(!newSedeCode) return alert('Selecciona una sede.');
       if(!newIngreso) return alert('Selecciona la fecha de ingreso.');
       if(e.estado==='inactivo' && !newRetiro) return alert('Para supernumerarios inactivos, la fecha de retiro es obligatoria.');
+      const modal=await showActionModal({
+        title:'Confirmar modificacion',
+        message:`Supernumerario: ${e.nombre||'-'}`,
+        confirmText:'Guardar cambios',
+        fields:[{ id:'detail', label:'Detalle de la modificacion', type:'textarea', required:true, placeholder:'Describe brevemente el cambio realizado' }]
+      });
+      if(!modal.confirmed) return;
       try{
         if(newCode!==e.codigo){ const dup=await deps.findSupernumerarioByCode?.(newCode); if(dup && dup.id!==e.id) return alert('Ya existe un supernumerario con ese codigo.'); }
         if(newDoc!==e.documento){ const dupDoc=await deps.findSupernumerarioByDocument?.(newDoc); if(dupDoc && dupDoc.id!==e.id) return alert('Ya existe un supernumerario con ese documento.'); }
@@ -325,11 +351,11 @@ export const SupernumerariosAdmin=(mount,deps={})=>{
           fechaIngreso: new Date(`${newIngreso}T00:00:00`),
           fechaRetiro: newRetiro ? new Date(`${newRetiro}T00:00:00`) : null
         });
-        await deps.addAuditLog?.({ targetType:'supernumerario', targetId:e.id, action:'update_supernumerario', before:{ codigo:e.codigo, documento:e.documento, nombre:e.nombre, sedeCodigo:e.sedeCodigo, fechaRetiro:e.fechaRetiro||null }, after:{ codigo:newCode, documento:newDoc, nombre:newName, sedeCodigo:newSedeCode, fechaRetiro:newRetiro||null } });
+        await deps.addAuditLog?.({ targetType:'supernumerario', targetId:e.id, action:'update_supernumerario', before:{ codigo:e.codigo, documento:e.documento, nombre:e.nombre, sedeCodigo:e.sedeCodigo, fechaRetiro:e.fechaRetiro||null }, after:{ codigo:newCode, documento:newDoc, nombre:newName, sedeCodigo:newSedeCode, fechaRetiro:newRetiro||null }, note: modal.values.detail||null });
       }catch(err){ alert('Error: '+(err?.message||err)); }
     });
     btnCancel.addEventListener('click',()=> render());
-    box.append(btnSave,btnCancel); tds[10].replaceChildren(box);
+    box.append(btnSave,btnCancel); tds[9].replaceChildren(box);
   }
   function toInputDate(ts){
     try{

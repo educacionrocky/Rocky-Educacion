@@ -1,4 +1,6 @@
 import { el, qs } from '../utils/dom.js';
+import { showInfoModal } from '../utils/infoModal.js';
+import { showActionModal } from '../utils/actionModal.js';
 export const NovedadesAdmin=(mount,deps={})=>{
   const ui=el('section',{className:'main-card'},[
     el('h2',{},['Novedades']),
@@ -34,8 +36,6 @@ export const NovedadesAdmin=(mount,deps={})=>{
             el('th',{'data-sort':'reemplazo',style:'cursor:pointer'},['Reemplazo']),
             el('th',{'data-sort':'nomina',style:'cursor:pointer'},['Nomina']),
             el('th',{'data-sort':'estado',style:'cursor:pointer'},['Estado']),
-            el('th',{'data-sort':'createdByEmail',style:'cursor:pointer'},['Creado por']),
-            el('th',{'data-sort':'createdAt',style:'cursor:pointer'},['Creacion']),
             el('th',{},['Acciones'])
           ]) ]),
           el('tbody',{})
@@ -110,15 +110,21 @@ export const NovedadesAdmin=(mount,deps={})=>{
     const tdReemp=el('td',{},[ (n.reemplazo||'').toUpperCase() || '-' ]);
     const tdNomina=el('td',{},[ (n.nomina||'').toUpperCase() || '-' ]);
     const tdEstado=el('td',{},[ statusBadge(n.estado) ]);
-    const tdActor=el('td',{},[ n.createdByEmail||n.createdByUid||'-' ]);
-    const tdFecha=el('td',{},[ formatDate(n.createdAt) ]);
     const tdAcc=el('td',{},[ actionsCell(n) ]);
     tr.addEventListener('dblclick',()=> startEdit(tr,n));
-    tr.append(tdCodigo,tdCodeRef,tdNombre,tdReemp,tdNomina,tdEstado,tdActor,tdFecha,tdAcc);
+    tr.append(tdCodigo,tdCodeRef,tdNombre,tdReemp,tdNomina,tdEstado,tdAcc);
     return tr;
   }
   function statusBadge(st){ return el('span',{className:'badge '+(st==='activo'?'badge--ok':'badge--off')},[st||'-']); }
   function formatDate(ts){ try{ const d=ts?.toDate? ts.toDate(): (ts? new Date(ts): null); return d? new Date(d).toLocaleString(): '-'; }catch{ return '-'; } }
+  function auditInfoData(n){
+    const hasMod = Boolean(n.lastModifiedAt || n.lastModifiedByEmail || n.lastModifiedByUid);
+    return {
+      action: hasMod ? 'Ultima modificacion' : 'Creacion',
+      user: hasMod ? (n.lastModifiedByEmail||n.lastModifiedByUid||'-') : (n.createdByEmail||n.createdByUid||'-'),
+      date: hasMod ? formatDate(n.lastModifiedAt) : formatDate(n.createdAt)
+    };
+  }
   function actionsCell(n){
     const box=el('div',{className:'row-actions'},[]);
     const btnEdit=el('button',{className:'btn'},['Editar']);
@@ -126,10 +132,18 @@ export const NovedadesAdmin=(mount,deps={})=>{
     const btnToggle=el('button',{className:'btn '+(n.estado==='activo'?'btn--danger':'' )},[ n.estado==='activo'?'Desactivar':'Activar' ]);
     btnToggle.addEventListener('click',async()=>{
       const target=n.estado==='activo'?'inactivo':'activo';
-      if(!window.confirm(`${n.estado==='activo'?'Desactivar':'Activar'} novedad "${n.nombre}"?`)) return;
-      try{ await deps.setNovedadStatus?.(n.id,target); await deps.addAuditLog?.({ targetType:'novedad', targetId:n.id, action: target==='activo'?'activate_novedad':'deactivate_novedad', before:{estado:n.estado}, after:{estado:target} }); }catch(e){ alert('Error: '+(e?.message||e)); }
+      const modal=await showActionModal({
+        title:`${target==='inactivo'?'Desactivar':'Activar'} novedad`,
+        message:`Novedad: ${n.nombre||'-'}`,
+        confirmText:target==='inactivo'?'Desactivar':'Activar',
+        fields:[{ id:'detail', label:'Detalle', type:'textarea', required:true, placeholder:'Escribe el motivo o detalle de esta accion' }]
+      });
+      if(!modal.confirmed) return;
+      try{ await deps.setNovedadStatus?.(n.id,target); await deps.addAuditLog?.({ targetType:'novedad', targetId:n.id, action: target==='activo'?'activate_novedad':'deactivate_novedad', before:{estado:n.estado}, after:{estado:target}, note: modal.values.detail||null }); }catch(e){ alert('Error: '+(e?.message||e)); }
     });
-    box.append(btnEdit,btnToggle); return box;
+    const btnInfo=el('button',{className:'btn',title:'Ver informacion del registro','aria-label':'Ver informacion del registro'},['ⓘ']);
+    btnInfo.addEventListener('click',()=>{ const info=auditInfoData(n); showInfoModal('Informacion del registro',[`Evento: ${info.action}`,`Usuario: ${info.user}`,`Fecha: ${info.date}`]); });
+    box.append(btnEdit,btnToggle,btnInfo); return box;
   }
   function startEdit(tr,n){
     const cur={ codigo:n.codigo||'', codigoNovedad:n.codigoNovedad||'', nombre:n.nombre||'', reemplazo:n.reemplazo||'', nomina:n.nomina||'' };
@@ -146,8 +160,6 @@ export const NovedadesAdmin=(mount,deps={})=>{
       el('option',{value:'no', selected:cur.nomina==='no'},['NO'])
     ]));
     tds[5].replaceChildren(statusBadge(n.estado));
-    tds[6].textContent=n.createdByEmail||n.createdByUid||'-';
-    tds[7].textContent=formatDate(n.createdAt);
     const box=el('div',{className:'row-actions'},[]);
     const btnSave=el('button',{className:'btn btn--primary'},['Guardar']);
     const btnCancel=el('button',{className:'btn'},['Cancelar']);
@@ -160,15 +172,22 @@ export const NovedadesAdmin=(mount,deps={})=>{
       if(!newCode||!newCodeRef||!newName) return alert('Completa codigo, codigo novedad y nombre.');
       if(!newReemp) return alert('Selecciona reemplazo.');
       if(!newNomina) return alert('Selecciona nomina.');
+      const modal=await showActionModal({
+        title:'Confirmar modificacion',
+        message:`Novedad: ${n.nombre||'-'}`,
+        confirmText:'Guardar cambios',
+        fields:[{ id:'detail', label:'Detalle de la modificacion', type:'textarea', required:true, placeholder:'Describe brevemente el cambio realizado' }]
+      });
+      if(!modal.confirmed) return;
       try{
         if(newCode!==n.codigo){ const dup=await deps.findNovedadByCode?.(newCode); if(dup && dup.id!==n.id) return alert('Ya existe una novedad con ese codigo.'); }
         if(newCodeRef!==n.codigoNovedad){ const dupRef=await deps.findNovedadByCodigoNovedad?.(newCodeRef); if(dupRef && dupRef.id!==n.id) return alert('Ya existe una novedad con ese codigo de novedad.'); }
         await deps.updateNovedad?.(n.id,{ codigo:newCode, codigoNovedad:newCodeRef, nombre:newName, reemplazo:newReemp, nomina:newNomina });
-        await deps.addAuditLog?.({ targetType:'novedad', targetId:n.id, action:'update_novedad', before:{ codigo:n.codigo||null, codigoNovedad:n.codigoNovedad||null, nombre:n.nombre||null, reemplazo:n.reemplazo||null, nomina:n.nomina||null }, after:{ codigo:newCode||null, codigoNovedad:newCodeRef||null, nombre:newName||null, reemplazo:newReemp||null, nomina:newNomina||null } });
+        await deps.addAuditLog?.({ targetType:'novedad', targetId:n.id, action:'update_novedad', before:{ codigo:n.codigo||null, codigoNovedad:n.codigoNovedad||null, nombre:n.nombre||null, reemplazo:n.reemplazo||null, nomina:n.nomina||null }, after:{ codigo:newCode||null, codigoNovedad:newCodeRef||null, nombre:newName||null, reemplazo:newReemp||null, nomina:newNomina||null }, note: modal.values.detail||null });
       }catch(e){ alert('Error: '+(e?.message||e)); }
     });
     btnCancel.addEventListener('click',()=> render());
-    box.append(btnSave,btnCancel); tds[8].replaceChildren(box);
+    box.append(btnSave,btnCancel); tds[6].replaceChildren(box);
   }
   const un=deps.streamNovedades?.((arr)=>{ snapshot=arr||[]; render(); });
   qs('#txtSearch',ui).addEventListener('input',render);
