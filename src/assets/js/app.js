@@ -4,6 +4,7 @@ import { Sidebar } from './components/Sidebar.js';
 
 import { Home } from './components/Home.js';
 import { Contact } from './components/Contact.js';
+import { DataTreatment } from './components/DataTreatment.js';
 import { About } from './components/About.js';
 import { Login } from './components/Login.js';
 import { Notes } from './components/Notes.js';
@@ -99,6 +100,7 @@ let unsubRoleMatrix=null; let unsubUserOverrides=null; let unsubAudit=null;
   addRoute('/login', ()=> Login(root, deps));
   addRoute('/', ()=> requireAuth(()=> Home(root, deps)));
   addRoute('/contact', ()=> requireAuth(()=> Contact(root)));
+  addRoute('/data-treatment', ()=> requireAuth(()=> DataTreatment(root)));
   addRoute('/about', ()=> requireAuth(()=> About(root)));
   addRoute('/notes', ()=> requireAuth(()=> Notes(root)));
 

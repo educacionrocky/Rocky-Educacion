@@ -44,6 +44,9 @@
 
 /* Header navigation */
 .header-nav{display:flex;align-items:center;gap:.75rem;padding:.6rem 0}
+.header-nav__brand{display:inline-flex;align-items:center;padding:.2rem .25rem;border-radius:8px}
+.header-nav__brand:hover{background:var(--header-hover)}
+.header-nav__brand-logo{height:32px;width:auto;display:block}
 .header-nav__spacer{flex:1}
 .header-nav__link{padding:.45rem .7rem;border-radius:8px;color:var(--header-fg)}
 .header-nav__link:hover{background:var(--header-hover)}
@@ -106,3 +109,9 @@
 .action-modal__field{display:flex;flex-direction:column;gap:.35rem;margin-bottom:.7rem}
 .action-modal__field:last-child{margin-bottom:0}
 .action-modal__footer{display:flex;justify-content:flex-end;gap:.5rem;padding:.8rem 1rem;border-top:1px solid var(--color-border)}
+
+/* Contact cards */
+.contact-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:1rem}
+.contact-card{background:var(--color-surface);border:1px solid var(--color-border);border-radius:12px;padding:1rem;box-shadow:var(--shadow)}
+.contact-card__title{margin:0 0 .7rem 0;font-size:1.05rem}
+.contact-card__row{margin:.35rem 0;color:var(--color-fg);line-height:1.4}

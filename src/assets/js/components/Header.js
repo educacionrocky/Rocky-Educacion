@@ -22,8 +22,12 @@ export const Header=(deps={})=>{
   });
 
   const nav=el('nav',{className:'header-nav container'},[
+    el('a',{href:'#',className:'header-nav__brand',title:'Servilimpieza','aria-label':'Servilimpieza'},[
+      el('img',{className:'header-nav__brand-logo',src:'src/assets/img/servilimpieza-logo.svg',alt:'Logo Servilimpieza',loading:'lazy'})
+    ]),
     navLink('Inicio','/',()=> navigate('/')),
     navLink('Contacto','/contact',()=> navigate('/contact')),
+    navLink('Tratamiento Datos','/data-treatment',()=> navigate('/data-treatment')),
     navLink('Acerca','/about',()=> navigate('/about')),
     el('div',{className:'header-nav__spacer'},[]),
     themeBtn,
