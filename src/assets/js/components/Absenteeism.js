@@ -75,6 +75,7 @@ export const Absenteeism=(mount,deps={})=>{
   let attendanceByKey=new Map();
   let replByEmpDate=new Map();
   let replacementSuperByDateDoc=new Set();
+  let novedadRules={ byCode:new Map(), byName:new Map() };
   let totalsRows=[];
   let detailRowsCache=[];
 
@@ -86,14 +87,29 @@ export const Absenteeism=(mount,deps={})=>{
   async function run(){
     const date=qs('#opDate',ui).value;
     if(!date){ msg.textContent='Selecciona una fecha.'; return; }
+    const dayClosed=await deps.isOperationDayClosed?.(date);
+    if(!dayClosed){
+      sedeDailyRows=[]; dependencyRows=[]; totalsRows=[]; detailRowsCache=[];
+      qs('#tblDependency tbody',ui).replaceChildren();
+      qs('#tblTotals tbody',ui).replaceChildren();
+      qs('#tblDetail tbody',ui).replaceChildren();
+      qs('#totDependency',ui).textContent='Total dependencias - Planeados: 0, Contratados: 0, No contratado: 0, Novedad sin reemplazo: 0, Total ausentismo: 0, Total a pagar: 0';
+      qs('#totRange',ui).textContent='Total rango a pagar: 0';
+      msg.textContent='La fecha seleccionada no esta cerrada. El CRUC solo muestra dias cerrados.';
+      return;
+    }
     msg.textContent='Consultando...';
     try{
-      const [sedeStatus, attendance, replacements, sedes]=await Promise.all([
+      const [sedeStatus, attendance, replacements, sedes, novedades, employees, supernumerarios]=await Promise.all([
         deps.listSedeStatusRange?.(date,date) || [],
         deps.listAttendanceRange?.(date,date) || [],
         deps.listImportReplacementsRange?.(date,date) || [],
-        loadSedesSnapshot()
+        loadSedesSnapshot(),
+        loadNovedadesSnapshot(),
+        loadEmployeesSnapshot(),
+        loadSupernumerariosSnapshot()
       ]);
+      novedadRules=buildNovedadReplacementRules(novedades||[]);
 
       const sedeMetaByCode=new Map();
       (sedes||[]).forEach((s)=>{
@@ -105,7 +121,6 @@ export const Absenteeism=(mount,deps={})=>{
 
       replByEmpDate=new Map();
       replacementSuperByDateDoc=new Set();
-      const replBySedeDate=new Map();
       (replacements||[]).forEach((r)=>{
         const empKey=`${r.fecha||''}|${r.empleadoId||''}`;
         replByEmpDate.set(empKey,r);
@@ -115,9 +130,6 @@ export const Absenteeism=(mount,deps={})=>{
             replacementSuperByDateDoc.add(`${r.fecha||''}|${superDoc}`);
           }
         }
-        const sdKey=`${r.fecha||''}|${r.sedeCodigo||''}`;
-        if(!replBySedeDate.has(sdKey)) replBySedeDate.set(sdKey,[]);
-        replBySedeDate.get(sdKey).push(r);
       });
       attendanceByKey=new Map();
       (attendance||[]).forEach((a)=>{
@@ -128,23 +140,50 @@ export const Absenteeism=(mount,deps={})=>{
         attendanceByKey.get(key).push(a);
       });
 
-      sedeDailyRows=(sedeStatus||[]).map((s)=>{
-        const key=`${s.fecha||''}|${s.sedeCodigo||''}`;
+      const statusBySede=new Map((sedeStatus||[]).map((s)=> [String(s.sedeCodigo||''), s]));
+      const superDocs=new Set(
+        (supernumerarios||[])
+          .filter((s)=> isEmployeeExpectedForDate(s,date))
+          .map((s)=> String(s.documento||'').trim())
+          .filter(Boolean)
+      );
+      const contratadosBySede=new Map();
+      (employees||[]).forEach((e)=>{
+        if(!isEmployeeExpectedForDate(e,date)) return;
+        const doc=String(e.documento||'').trim();
+        if(doc && superDocs.has(doc)) return;
+        const sedeCode=String(e.sedeCodigo||'').trim();
+        if(!sedeCode) return;
+        contratadosBySede.set(sedeCode, Number(contratadosBySede.get(sedeCode)||0)+1);
+      });
+
+      sedeDailyRows=(sedes||[])
+        .filter((s)=> String(s.estado||'activo').trim().toLowerCase()!=='inactivo')
+        .map((s)=>{
+        const sedeCode=String(s.codigo||'').trim();
+        const key=`${date}|${sedeCode}`;
         const atts=attendanceByKey.get(key)||[];
-        const contratados=atts.length;
-        const planeados=Number(s.operariosEsperados||0);
+        const status=statusBySede.get(sedeCode)||{};
+        const planeadosRaw=s.numeroOperarios ?? status.operariosPlaneados ?? status.operariosEsperados ?? 0;
+        const planeados=parseOperatorCount(planeadosRaw);
+        const contratados=Number(contratadosBySede.get(sedeCode)||0);
         const noContratado=Math.max(0, planeados-contratados);
-        const novSinReemplazo=(replBySedeDate.get(key)||[]).filter((r)=> r.decision!=='reemplazo').length;
+        const novSinReemplazo=atts.filter((a)=>{
+          if(a.asistio===true) return false;
+          const rep=replByEmpDate.get(`${a.fecha||''}|${a.empleadoId||''}`);
+          if(rep && rep.decision==='reemplazo') return false;
+          return attendanceRequiresReplacementForSummary(a,novedadRules);
+        }).length;
         const ausentismoTotal=noContratado+novSinReemplazo;
         const totalPagar=Math.max(0, planeados-noContratado-novSinReemplazo);
-        const meta=sedeMetaByCode.get(String(s.sedeCodigo||''))||{};
+        const meta=sedeMetaByCode.get(sedeCode)||{};
         const dependenciaCodigo=String(meta.dependenciaCodigo||'').trim();
         const dependenciaNombre=String(meta.dependenciaNombre||'').trim()||'Sin dependencia';
         const dependenciaKey=dependenciaCodigo || `NO_DEP:${dependenciaNombre}`;
         return {
-          fecha:s.fecha||'',
-          sedeCodigo:s.sedeCodigo||'',
-          sedeNombre:s.sedeNombre||s.sedeCodigo||'-',
+          fecha:date,
+          sedeCodigo:sedeCode,
+          sedeNombre:String(s.nombre||sedeCode||'-'),
           dependenciaCodigo,
           dependenciaNombre,
           dependenciaKey,
@@ -280,8 +319,10 @@ export const Absenteeism=(mount,deps={})=>{
           estado=rep.decision==='reemplazo'
             ? `Reemplazado por ${rep.supernumerarioNombre||rep.supernumerarioDocumento||'-'}`
             : 'Ausentismo';
-        }else if(!a.asistio){
-          estado='Ausentismo';
+        }else if(a.asistio===false){
+          estado=attendanceRequiresReplacementForSummary(a,novedadRules)
+            ? 'Ausentismo'
+            : `Novedad: ${a.novedadNombre||a.novedad||'-'}`;
         }
         detailRows.push({
           fecha:d.fecha,
@@ -331,8 +372,10 @@ export const Absenteeism=(mount,deps={})=>{
           estado=rep.decision==='reemplazo'
             ? `Reemplazado por ${rep.supernumerarioNombre||rep.supernumerarioDocumento||'-'}`
             : 'Ausentismo';
-        }else if(!a.asistio){
-          estado='Ausentismo';
+        }else if(a.asistio===false){
+          estado=attendanceRequiresReplacementForSummary(a,novedadRules)
+            ? 'Ausentismo'
+            : `Novedad: ${a.novedadNombre||a.novedad||'-'}`;
         }
         detailRows.push({
           fecha:d.fecha,
@@ -469,10 +512,137 @@ export const Absenteeism=(mount,deps={})=>{
     });
   }
 
+  async function loadNovedadesSnapshot(){
+    if(typeof deps.streamNovedades!=='function') return [];
+    return new Promise((resolve)=>{
+      let settled=false;
+      let unsub=null;
+      const finish=(rows)=>{
+        if(settled) return;
+        settled=true;
+        try{ if(typeof unsub==='function') unsub(); }catch{}
+        resolve(Array.isArray(rows)? rows : []);
+      };
+      unsub=deps.streamNovedades((rows)=> finish(rows));
+      setTimeout(()=> finish([]), 5000);
+    });
+  }
+
+  async function loadEmployeesSnapshot(){
+    if(typeof deps.streamEmployees!=='function') return [];
+    return new Promise((resolve)=>{
+      let settled=false;
+      let unsub=null;
+      const finish=(rows)=>{
+        if(settled) return;
+        settled=true;
+        try{ if(typeof unsub==='function') unsub(); }catch{}
+        resolve(Array.isArray(rows)? rows : []);
+      };
+      unsub=deps.streamEmployees((rows)=> finish(rows));
+      setTimeout(()=> finish([]), 5000);
+    });
+  }
+
+  async function loadSupernumerariosSnapshot(){
+    if(typeof deps.streamSupernumerarios!=='function') return [];
+    return new Promise((resolve)=>{
+      let settled=false;
+      let unsub=null;
+      const finish=(rows)=>{
+        if(settled) return;
+        settled=true;
+        try{ if(typeof unsub==='function') unsub(); }catch{}
+        resolve(Array.isArray(rows)? rows : []);
+      };
+      unsub=deps.streamSupernumerarios((rows)=> finish(rows));
+      setTimeout(()=> finish([]), 5000);
+    });
+  }
+
   mount.replaceChildren(ui);
   enableSectionToggles(ui);
   return ()=>{};
 };
+
+function buildNovedadReplacementRules(rows=[]){
+  const byCode=new Map();
+  const byName=new Map();
+  (Array.isArray(rows)?rows:[]).forEach((r)=>{
+    const code=String(r.codigoNovedad||r.codigo||'').trim();
+    const name=normalizeText(String(r.nombre||'').trim());
+    const repl=normalizeText(String(r.reemplazo||'').trim());
+    const needs=['si','yes','true','1','reemplazo'].includes(repl);
+    if(code) byCode.set(code,needs);
+    if(name) byName.set(name,needs);
+  });
+  return { byCode, byName };
+}
+
+function attendanceRequiresReplacementForSummary(att={},rules={}){
+  const code=String(att.novedadCodigo||'').trim();
+  if(code==='8') return true;
+  if(code && rules?.byCode?.has(code)) return rules.byCode.get(code)===true;
+  const name=normalizeText(baseNovedadNameForSummary(att.novedadNombre||att.novedad||''));
+  if(name && rules?.byName?.has(name)) return rules.byName.get(name)===true;
+  return false;
+}
+
+function baseNovedadNameForSummary(raw){
+  return String(raw||'').replace(/\s*\(.*\)\s*$/, '').trim();
+}
+
+function normalizeText(v){
+  return String(v||'')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g,'')
+    .replace(/\s+/g,' ')
+    .trim()
+    .toLowerCase();
+}
+
+function parseOperatorCount(value){
+  if(value==null) return 0;
+  if(typeof value==='number') return Number.isFinite(value)? Math.trunc(value):0;
+  const raw=String(value).trim();
+  if(!raw) return 0;
+  const digits=raw.replace(/[^\d]/g,'');
+  if(!digits) return 0;
+  const n=Number(digits);
+  return Number.isFinite(n)? n:0;
+}
+
+function isEmployeeExpectedForDate(emp,selectedDate){
+  if(!selectedDate) return false;
+  const ingreso=toISODate(emp?.fechaIngreso);
+  if(!ingreso || ingreso>selectedDate) return false;
+  const retiro=toISODate(emp?.fechaRetiro);
+  const estado=String(emp?.estado||'').trim().toLowerCase();
+  if(estado==='inactivo') return Boolean(retiro && retiro>=selectedDate);
+  if(retiro && retiro<selectedDate) return false;
+  return true;
+}
+
+function toISODate(value){
+  if(!value) return null;
+  if(typeof value==='string'){
+    const v=value.trim();
+    if(/^\d{4}-\d{2}-\d{2}$/.test(v)) return v;
+    const dt=new Date(v);
+    if(!Number.isNaN(dt.getTime())) return dt.toISOString().slice(0,10);
+    return null;
+  }
+  if(typeof value?.toDate==='function'){
+    const dt=value.toDate();
+    if(!Number.isNaN(dt.getTime())) return dt.toISOString().slice(0,10);
+    return null;
+  }
+  if(value instanceof Date){
+    if(!Number.isNaN(value.getTime())) return value.toISOString().slice(0,10);
+    return null;
+  }
+  return null;
+}
 
 function todayBogota(){
   const fmt=new Intl.DateTimeFormat('en-CA',{ timeZone:'America/Bogota', year:'numeric', month:'2-digit', day:'2-digit' });

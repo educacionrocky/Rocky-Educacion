@@ -48,7 +48,8 @@ export const Sidebar = () => {
     if (bulkLinks.length) sections.push(section('Cargue masivo', bulkLinks, 'cargue_masivo'));
 
     const opLinks = [];
-    if (can(PERMS.IMPORT_DATA)) opLinks.push(navLink('Importar datos', '/imports'));
+    if (can(PERMS.IMPORT_DATA)) opLinks.push(navLink('Registro Diario', '/registros-vivo'));
+    if (can(PERMS.IMPORT_DATA)) opLinks.push(navLink('Registro Sede', '/registro-sede'));
     if (can(PERMS.VIEW_IMPORT_HISTORY)) opLinks.push(navLink('Historial de importaciones', '/import-history'));
     if (can(PERMS.RUN_PAYROLL)) opLinks.push(navLink('Nomina', '/payroll'));
     if (can(PERMS.MANAGE_ABSENTEEISM)) opLinks.push(navLink('Ausentismo', '/absenteeism'));
@@ -157,7 +158,10 @@ function getNavIconLabel(route) {
     '/bulk-upload-sedes': 'BS',
     '/bulk-upload': 'BE',
     '/bulk-upload-supernumerarios': 'BN',
-    '/imports': 'IM',
+    '/imports': 'WA',
+    '/whatsapp-live': 'WA',
+    '/registros-vivo': 'WA',
+    '/registro-sede': 'RS',
     '/import-history': 'HI',
     '/payroll': 'NO',
     '/absenteeism': 'AU',

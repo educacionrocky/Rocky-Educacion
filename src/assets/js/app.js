@@ -25,12 +25,13 @@ import { ImportHistory } from './components/ImportHistory.js';
 import { Payroll } from './components/Payroll.js';
 import { Absenteeism } from './components/Absenteeism.js';
 import { Reports } from './components/Reports.js';
-import { UploadData } from './components/UploadData.js';
 import { ImportReplacements } from './components/ImportReplacements.js';
 import { CargarDatos } from './components/CargarDatos.js';
 import { PermissionsCenter } from './components/PermissionsCenter.js';
+import { WhatsAppLive } from './components/WhatsAppLive.js';
+import { RegistroSede } from './components/RegistroSede.js';
 
-import { addRoute, startRouter, navigate } from './router.js';
+import { addRoute, startRouter, navigate, refreshRoute } from './router.js';
 import { getState, setState } from './state.js';
 import { can, PERMS, isSuperAdmin } from './permissions.js';
 import { USE_FIREBASE } from './config.js';
@@ -49,50 +50,60 @@ let unsubRoleMatrix=null; let unsubUserOverrides=null; let unsubAudit=null;
 
 (function init(){
   if(USE_FIREBASE){
-    import('./firebase.js').then(fb=>{
-      deps={
-        authState:fb.authState, login:fb.login, register:fb.register, logout:fb.logout,
-        ensureUserProfile:fb.ensureUserProfile, loadUserProfile:fb.loadUserProfile, createUserProfile:fb.createUserProfile,
-        addNote:fb.addNote, streamNotes:fb.streamNotes,
-        // permisos
-        streamRoleMatrix:fb.streamRoleMatrix, setRolePermissions:fb.setRolePermissions, streamUserOverrides:fb.streamUserOverrides,
-        getUserOverrides:fb.getUserOverrides, setUserOverrides:fb.setUserOverrides, clearUserOverrides:fb.clearUserOverrides,
-        addAuditLog:fb.addAuditLog, streamAuditLogs:(cb)=>{ if(unsubAudit)unsubAudit(); unsubAudit=fb.streamAuditLogs(cb); return unsubAudit; },
-        // users
-        streamUsers:fb.streamUsers, setUserRole:fb.setUserRole, findUserByEmail:fb.findUserByEmail,
-        // zonas
-        streamZones:fb.streamZones, createZone:fb.createZone, updateZone:fb.updateZone, setZoneStatus:fb.setZoneStatus, findZoneByCode:fb.findZoneByCode, getNextZoneCode:fb.getNextZoneCode,
-        // dependencias
-        streamDependencies:fb.streamDependencies, createDependency:fb.createDependency, updateDependency:fb.updateDependency, setDependencyStatus:fb.setDependencyStatus, findDependencyByCode:fb.findDependencyByCode, getNextDependencyCode:fb.getNextDependencyCode,
-        // sedes
-        streamSedes:fb.streamSedes, createSede:fb.createSede, updateSede:fb.updateSede, setSedeStatus:fb.setSedeStatus, findSedeByCode:fb.findSedeByCode, getNextSedeCode:fb.getNextSedeCode,
-        createSedesBulk:fb.createSedesBulk,
-        // empleados
-        streamEmployees:fb.streamEmployees, createEmployee:fb.createEmployee, updateEmployee:fb.updateEmployee, setEmployeeStatus:fb.setEmployeeStatus, findEmployeeByCode:fb.findEmployeeByCode, findEmployeeByDocument:fb.findEmployeeByDocument, getNextEmployeeCode:fb.getNextEmployeeCode,
-        createEmployeesBulk:fb.createEmployeesBulk,
-        // supernumerarios
-        streamSupernumerarios:fb.streamSupernumerarios, createSupernumerario:fb.createSupernumerario, updateSupernumerario:fb.updateSupernumerario, setSupernumerarioStatus:fb.setSupernumerarioStatus, findSupernumerarioByCode:fb.findSupernumerarioByCode, findSupernumerarioByDocument:fb.findSupernumerarioByDocument, getNextSupernumerarioCode:fb.getNextSupernumerarioCode, createSupernumerariosBulk:fb.createSupernumerariosBulk,
-        // cargos
-        streamCargos:fb.streamCargos, createCargo:fb.createCargo, updateCargo:fb.updateCargo, setCargoStatus:fb.setCargoStatus, findCargoByCode:fb.findCargoByCode, getNextCargoCode:fb.getNextCargoCode,
-        // novedades
-        streamNovedades:fb.streamNovedades, createNovedad:fb.createNovedad, updateNovedad:fb.updateNovedad, setNovedadStatus:fb.setNovedadStatus, findNovedadByCode:fb.findNovedadByCode, findNovedadByCodigoNovedad:fb.findNovedadByCodigoNovedad, getNextNovedadCode:fb.getNextNovedadCode,
-        // supervisores
-        streamSupervisors:fb.streamSupervisors, createSupervisor:fb.createSupervisor, updateSupervisor:fb.updateSupervisor, setSupervisorStatus:fb.setSupervisorStatus, findSupervisorByCode:fb.findSupervisorByCode, findSupervisorByDocument:fb.findSupervisorByDocument, getNextSupervisorCode:fb.getNextSupervisorCode,
-        // operacion
-        confirmImportOperation:fb.confirmImportOperation, saveImportReplacements:fb.saveImportReplacements,
-        listSedeStatusRange:fb.listSedeStatusRange, listAttendanceRange:fb.listAttendanceRange, listImportReplacementsRange:fb.listImportReplacementsRange,
-        streamImportHistory:fb.streamImportHistory
-      };
-      fb.authState(async (user)=>{
-        if(unsubRoleMatrix){unsubRoleMatrix();unsubRoleMatrix=null;} if(unsubUserOverrides){unsubUserOverrides();unsubUserOverrides=null;}
-        if(!user){ setState({ user:null, userProfile:null, userOverrides:{} }); headerMount.replaceChildren(Header(deps)); sidebarMount.replaceChildren(Sidebar()); if(location.hash!=="#/login") navigate('/login'); return; }
-        await fb.ensureUserProfile(user); const profile=await fb.loadUserProfile(user.uid); setState({ user, userProfile: profile });
-        unsubRoleMatrix=fb.streamRoleMatrix((map)=> setState({ roleMatrix: map }));
-        unsubUserOverrides=fb.streamUserOverrides(user.uid,(ov)=> setState({ userOverrides: ov||{} }));
-        headerMount.replaceChildren(Header(deps)); sidebarMount.replaceChildren(Sidebar());
-        if(location.hash==='' || location.hash==="#/login") navigate('/');
+    import('./firebase.js')
+      .then((fb) => {
+        deps={
+          authState:fb.authState, login:fb.login, register:fb.register, logout:fb.logout,
+          ensureUserProfile:fb.ensureUserProfile, loadUserProfile:fb.loadUserProfile, createUserProfile:fb.createUserProfile,
+          addNote:fb.addNote, streamNotes:fb.streamNotes,
+          // permisos
+          streamRoleMatrix:fb.streamRoleMatrix, setRolePermissions:fb.setRolePermissions, streamUserOverrides:fb.streamUserOverrides,
+          getUserOverrides:fb.getUserOverrides, setUserOverrides:fb.setUserOverrides, clearUserOverrides:fb.clearUserOverrides,
+          addAuditLog:fb.addAuditLog, streamAuditLogs:(cb)=>{ if(unsubAudit)unsubAudit(); unsubAudit=fb.streamAuditLogs(cb); return unsubAudit; },
+          // users
+          streamUsers:fb.streamUsers, setUserRole:fb.setUserRole, findUserByEmail:fb.findUserByEmail,
+          // zonas
+          streamZones:fb.streamZones, createZone:fb.createZone, updateZone:fb.updateZone, setZoneStatus:fb.setZoneStatus, findZoneByCode:fb.findZoneByCode, getNextZoneCode:fb.getNextZoneCode,
+          // dependencias
+          streamDependencies:fb.streamDependencies, createDependency:fb.createDependency, updateDependency:fb.updateDependency, setDependencyStatus:fb.setDependencyStatus, findDependencyByCode:fb.findDependencyByCode, getNextDependencyCode:fb.getNextDependencyCode,
+          // sedes
+          streamSedes:fb.streamSedes, createSede:fb.createSede, updateSede:fb.updateSede, setSedeStatus:fb.setSedeStatus, findSedeByCode:fb.findSedeByCode, getNextSedeCode:fb.getNextSedeCode,
+          createSedesBulk:fb.createSedesBulk,
+          // empleados
+          streamEmployees:fb.streamEmployees, createEmployee:fb.createEmployee, updateEmployee:fb.updateEmployee, setEmployeeStatus:fb.setEmployeeStatus, findEmployeeByCode:fb.findEmployeeByCode, findEmployeeByDocument:fb.findEmployeeByDocument, getNextEmployeeCode:fb.getNextEmployeeCode,
+          createEmployeesBulk:fb.createEmployeesBulk,
+          // supernumerarios
+          streamSupernumerarios:fb.streamSupernumerarios, createSupernumerario:fb.createSupernumerario, updateSupernumerario:fb.updateSupernumerario, setSupernumerarioStatus:fb.setSupernumerarioStatus, findSupernumerarioByCode:fb.findSupernumerarioByCode, findSupernumerarioByDocument:fb.findSupernumerarioByDocument, getNextSupernumerarioCode:fb.getNextSupernumerarioCode, createSupernumerariosBulk:fb.createSupernumerariosBulk,
+          // cargos
+          streamCargos:fb.streamCargos, createCargo:fb.createCargo, updateCargo:fb.updateCargo, setCargoStatus:fb.setCargoStatus, findCargoByCode:fb.findCargoByCode, getNextCargoCode:fb.getNextCargoCode,
+          // novedades
+          streamNovedades:fb.streamNovedades, createNovedad:fb.createNovedad, updateNovedad:fb.updateNovedad, setNovedadStatus:fb.setNovedadStatus, findNovedadByCode:fb.findNovedadByCode, findNovedadByCodigoNovedad:fb.findNovedadByCodigoNovedad, getNextNovedadCode:fb.getNextNovedadCode,
+          // supervisores
+          streamSupervisors:fb.streamSupervisors, createSupervisor:fb.createSupervisor, updateSupervisor:fb.updateSupervisor, setSupervisorStatus:fb.setSupervisorStatus, findSupervisorByCode:fb.findSupervisorByCode, findSupervisorByDocument:fb.findSupervisorByDocument, getNextSupervisorCode:fb.getNextSupervisorCode,
+          // operacion
+          confirmImportOperation:fb.confirmImportOperation, saveImportReplacements:fb.saveImportReplacements,
+          isOperationDayClosed:fb.isOperationDayClosed, listClosedOperationDaysRange:fb.listClosedOperationDaysRange,
+          listSedeStatusRange:fb.listSedeStatusRange, listAttendanceRange:fb.listAttendanceRange, listImportReplacementsRange:fb.listImportReplacementsRange,
+          streamImportHistory:fb.streamImportHistory, streamWhatsAppIncoming:fb.streamWhatsAppIncoming,
+          streamAttendanceByDate:fb.streamAttendanceByDate, streamAttendanceRecent:fb.streamAttendanceRecent, streamImportReplacementsByDate:fb.streamImportReplacementsByDate
+        };
+
+        // Re-render current route so Login receives hydrated deps.
+        refreshRoute();
+
+        fb.authState(async (user)=>{
+          if(unsubRoleMatrix){unsubRoleMatrix();unsubRoleMatrix=null;} if(unsubUserOverrides){unsubUserOverrides();unsubUserOverrides=null;}
+          if(!user){ setState({ user:null, userProfile:null, userOverrides:{} }); headerMount.replaceChildren(Header(deps)); sidebarMount.replaceChildren(Sidebar()); if(location.hash!=="#/login") navigate('/login'); else refreshRoute(); return; }
+          await fb.ensureUserProfile(user); const profile=await fb.loadUserProfile(user.uid); setState({ user, userProfile: profile });
+          unsubRoleMatrix=fb.streamRoleMatrix((map)=> setState({ roleMatrix: map }));
+          unsubUserOverrides=fb.streamUserOverrides(user.uid,(ov)=> setState({ userOverrides: ov||{} }));
+          headerMount.replaceChildren(Header(deps)); sidebarMount.replaceChildren(Sidebar());
+          if(location.hash==='' || location.hash==="#/login") navigate('/');
+        });
+      })
+      .catch((err) => {
+        console.error('Firebase init failed:', err);
       });
-    });
   } else {
     setState({ user:null, userProfile:null });
   }
@@ -122,7 +133,10 @@ let unsubRoleMatrix=null; let unsubUserOverrides=null; let unsubAudit=null;
   addRoute('/supervisors', ()=> requireAuth(()=> guard(PERMS.MANAGE_SUPERVISORS, ()=> SupervisorsAdmin(root, deps))));
 
   // Operación
-  addRoute('/imports', ()=> requireAuth(()=> guard(PERMS.IMPORT_DATA, ()=> UploadData(root, deps))));
+  addRoute('/imports', ()=> { navigate('/registros-vivo'); return null; });
+  addRoute('/whatsapp-live', ()=> { navigate('/registros-vivo'); return null; });
+  addRoute('/registros-vivo', ()=> requireAuth(()=> guard(PERMS.IMPORT_DATA, ()=> WhatsAppLive(root, deps))));
+  addRoute('/registro-sede', ()=> requireAuth(()=> guard(PERMS.IMPORT_DATA, ()=> RegistroSede(root, deps))));
   addRoute('/imports-replacements', ()=> requireAuth(()=> guard(PERMS.IMPORT_DATA, ()=> ImportReplacements(root, deps))));
   addRoute('/import-history', ()=> requireAuth(()=> guard(PERMS.VIEW_IMPORT_HISTORY, ()=> ImportHistory(root, deps))));
   addRoute('/payroll', ()=> requireAuth(()=> guard(PERMS.RUN_PAYROLL, ()=> Payroll(root))));

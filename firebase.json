@@ -25,6 +25,13 @@
         }
       },
       {
+        "source": "/api/whatsapp/webhook",
+        "function": {
+          "functionId": "whatsappWebhook",
+          "region": "us-central1"
+        }
+      },
+      {
         "source": "**",
         "destination": "/index.html"
       }

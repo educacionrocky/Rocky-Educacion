@@ -67,6 +67,15 @@ function replaceUndefined(value){
   }
   return value;
 }
+
+function normalizeEmployeePhoneCO(value){
+  if(value === null || value === undefined) return null;
+  const digits=String(value).replace(/\D/g,'');
+  if(!digits) return null;
+  if(digits.startsWith('57')) return digits;
+  if(digits.length===10) return `57${digits}`;
+  return digits;
+}
 export async function addAuditLog(entry){
   const ref=collection(db,'audit_logs');
   const safe=replaceUndefined(entry||{});
@@ -204,7 +213,7 @@ export async function createEmployee({ codigo, documento, nombre, telefono, carg
     codigo:codigo||null,
     documento:documento||null,
     nombre:nombre||null,
-    telefono:telefono||null,
+    telefono:normalizeEmployeePhoneCO(telefono),
     cargoCodigo:cargoCodigo||null,
     cargoNombre:cargoNombre||null,
     sedeCodigo:sedeCodigo||null,
@@ -230,7 +239,7 @@ export async function updateEmployee(id,data={}){
   if(typeof codigo==='string') patch.codigo=codigo;
   if(typeof documento==='string') patch.documento=documento;
   if(typeof nombre==='string') patch.nombre=nombre;
-  if(typeof telefono==='string') patch.telefono=telefono;
+  if(typeof telefono==='string') patch.telefono=normalizeEmployeePhoneCO(telefono);
   if(typeof cargoCodigo==='string') patch.cargoCodigo=cargoCodigo;
   if(typeof cargoNombre==='string') patch.cargoNombre=cargoNombre;
   if(typeof sedeCodigo==='string') patch.sedeCodigo=sedeCodigo;
@@ -258,7 +267,7 @@ export async function updateEmployee(id,data={}){
   const supnPatch={};
   if(typeof documento==='string') supnPatch.documento=String(documento).trim();
   if(typeof nombre==='string') supnPatch.nombre=nombre;
-  if(typeof telefono==='string') supnPatch.telefono=telefono;
+  if(typeof telefono==='string') supnPatch.telefono=normalizeEmployeePhoneCO(telefono);
   if(typeof cargoCodigo==='string') supnPatch.cargoCodigo=cargoCodigo;
   if(typeof cargoNombre==='string') supnPatch.cargoNombre=cargoNombre;
   if(typeof sedeCodigo==='string') supnPatch.sedeCodigo=sedeCodigo;
@@ -332,7 +341,7 @@ export async function createEmployeesBulk(rows=[]){
       codigo:code,
       documento:row.documento||null,
       nombre:row.nombre||null,
-      telefono:row.telefono||null,
+      telefono:normalizeEmployeePhoneCO(row.telefono),
       cargoCodigo:row.cargoCodigo||null,
       cargoNombre:row.cargoNombre||null,
       sedeCodigo:row.sedeCodigo||null,
@@ -444,7 +453,7 @@ export async function updateSupernumerario(id,data={}){
   const empPatch={};
   if(typeof documento==='string') empPatch.documento=String(documento).trim();
   if(typeof nombre==='string') empPatch.nombre=nombre;
-  if(typeof telefono==='string') empPatch.telefono=telefono;
+  if(typeof telefono==='string') empPatch.telefono=normalizeEmployeePhoneCO(telefono);
   if(typeof cargoCodigo==='string') empPatch.cargoCodigo=cargoCodigo;
   if(typeof cargoNombre==='string') empPatch.cargoNombre=cargoNombre;
   if(typeof sedeCodigo==='string') empPatch.sedeCodigo=sedeCodigo;
@@ -646,6 +655,44 @@ export function streamImportHistory(onData,max=200){
   const qy=query(ref,orderBy('ts','desc'),limit(max));
   return onSnapshot(qy,(snap)=> onData(snap.docs.map((d)=>({ id:d.id, ...d.data() }))));
 }
+export function streamWhatsAppIncoming(onData,max=200,onError){
+  const ref=collection(db,'whatsapp_incoming');
+  const qy=query(ref,orderBy('receivedAt','desc'),limit(max));
+  return onSnapshot(
+    qy,
+    (snap)=> onData(snap.docs.map((d)=>({ id:d.id, ...d.data() }))),
+    (err)=> onError?.(err)
+  );
+}
+export function streamAttendanceByDate(fecha,onData,onError){
+  if(!fecha){ onData?.([]); return ()=>{}; }
+  const ref=collection(db,ATTENDANCE_COL);
+  const qy=query(ref, where('fecha','==',fecha));
+  return onSnapshot(
+    qy,
+    (snap)=> onData(snap.docs.map((d)=>({ id:d.id, ...d.data() }))),
+    (err)=> onError?.(err)
+  );
+}
+export function streamAttendanceRecent(onData,max=300,onError){
+  const ref=collection(db,ATTENDANCE_COL);
+  const qy=query(ref,orderBy('createdAt','desc'),limit(max));
+  return onSnapshot(
+    qy,
+    (snap)=> onData(snap.docs.map((d)=>({ id:d.id, ...d.data() }))),
+    (err)=> onError?.(err)
+  );
+}
+export function streamImportReplacementsByDate(fecha,onData,onError){
+  if(!fecha){ onData?.([]); return ()=>{}; }
+  const ref=collection(db,IMPORT_REPLACEMENTS_COL);
+  const qy=query(ref, where('fecha','==',fecha));
+  return onSnapshot(
+    qy,
+    (snap)=> onData(snap.docs.map((d)=>({ id:d.id, ...d.data() }))),
+    (err)=> onError?.(err)
+  );
+}
 export async function listSedeStatusRange(dateFrom,dateTo){
   if(!dateFrom || !dateTo) return [];
   const ref=collection(db,SEDE_STATUS_COL);
@@ -753,6 +800,14 @@ export async function confirmImportOperation(payload){
 
 export async function saveImportReplacements({ importId=null, fechaOperacion=null, assignments=[] }={}){
   const data=Array.isArray(assignments)? assignments.filter(Boolean): [];
+  const fechas=new Set();
+  data.forEach((a)=>{
+    const f=String(a?.fecha||fechaOperacion||'').trim();
+    if(f) fechas.add(f);
+  });
+  for(const f of fechas){
+    if(await isOperationDayClosed(f)) throw new Error(`La fecha ${f} ya esta cerrada y no admite cambios.`);
+  }
   const used=new Set();
   for(const a of data){
     if(a.decision==='reemplazo'){
@@ -790,4 +845,26 @@ export async function saveImportReplacements({ importId=null, fechaOperacion=nul
   }
   await batch.commit();
   return { saved:data.length };
+}
+
+export async function isOperationDayClosed(fecha){
+  const day=String(fecha||'').trim();
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(day)) return false;
+  const ref=doc(db,'daily_closures',day);
+  const snap=await getDoc(ref);
+  if(!snap.exists()) return false;
+  const row=snap.data()||{};
+  return row.locked===true || String(row.status||'').trim()==='closed';
+}
+
+export async function listClosedOperationDaysRange(dateFrom,dateTo){
+  if(!dateFrom || !dateTo) return [];
+  const ref=collection(db,'daily_closures');
+  const qy=query(ref, where('fecha','>=',dateFrom), where('fecha','<=',dateTo), orderBy('fecha','asc'));
+  const snap=await getDocs(qy);
+  return snap.docs
+    .map((d)=> ({ id:d.id, ...d.data() }))
+    .filter((r)=> r.locked===true || String(r.status||'').trim()==='closed')
+    .map((r)=> String(r.fecha||'').trim())
+    .filter(Boolean);
 }
