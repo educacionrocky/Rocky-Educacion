@@ -82,9 +82,10 @@ let unsubRoleMatrix=null; let unsubUserOverrides=null; let unsubAudit=null;
           streamSupervisors:fb.streamSupervisors, createSupervisor:fb.createSupervisor, updateSupervisor:fb.updateSupervisor, setSupervisorStatus:fb.setSupervisorStatus, findSupervisorByCode:fb.findSupervisorByCode, findSupervisorByDocument:fb.findSupervisorByDocument, getNextSupervisorCode:fb.getNextSupervisorCode,
           // operacion
           confirmImportOperation:fb.confirmImportOperation, saveImportReplacements:fb.saveImportReplacements,
+          closeOperationDayManual:fb.closeOperationDayManual,
           isOperationDayClosed:fb.isOperationDayClosed, listClosedOperationDaysRange:fb.listClosedOperationDaysRange,
           listSedeStatusRange:fb.listSedeStatusRange, listAttendanceRange:fb.listAttendanceRange, listImportReplacementsRange:fb.listImportReplacementsRange,
-          streamImportHistory:fb.streamImportHistory, streamWhatsAppIncoming:fb.streamWhatsAppIncoming,
+          streamImportHistory:fb.streamImportHistory, streamDailyClosures:fb.streamDailyClosures, streamWhatsAppIncoming:fb.streamWhatsAppIncoming,
           streamAttendanceByDate:fb.streamAttendanceByDate, streamAttendanceRecent:fb.streamAttendanceRecent, streamImportReplacementsByDate:fb.streamImportReplacementsByDate
         };
 

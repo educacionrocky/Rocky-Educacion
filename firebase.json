@@ -1,4 +1,7 @@
 {
+  "firestore": {
+    "rules": "firestore.rules"
+  },
   "functions": {
     "source": "functions"
   },
@@ -28,6 +31,13 @@
         "source": "/api/whatsapp/webhook",
         "function": {
           "functionId": "whatsappWebhook",
+          "region": "us-central1"
+        }
+      },
+      {
+        "source": "/api/operation/close",
+        "function": {
+          "functionId": "closeOperationDay",
           "region": "us-central1"
         }
       },

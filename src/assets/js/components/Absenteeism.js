@@ -16,13 +16,13 @@ export const Absenteeism=(mount,deps={})=>{
       el('div',{className:'table-wrap'},[
         el('table',{className:'table',id:'tblDependency'},[
           el('thead',{},[el('tr',{},[
-            el('th',{},['Dependencia']),
-            el('th',{},['Planeados']),
-            el('th',{},['Contratados']),
-            el('th',{},['No contratado']),
-            el('th',{},['Novedad sin reemplazo']),
-            el('th',{},['Total ausentismo']),
-            el('th',{},['Total a pagar']),
+            el('th',{'data-sort-dep':'dependenciaNombre',style:'cursor:pointer'},['Dependencia']),
+            el('th',{'data-sort-dep':'planeados',style:'cursor:pointer'},['Planeados']),
+            el('th',{'data-sort-dep':'contratados',style:'cursor:pointer'},['Contratados']),
+            el('th',{'data-sort-dep':'noContratado',style:'cursor:pointer'},['No contratado']),
+            el('th',{'data-sort-dep':'novSinReemplazo',style:'cursor:pointer'},['Novedad sin reemplazo']),
+            el('th',{'data-sort-dep':'ausentismoTotal',style:'cursor:pointer'},['Total ausentismo']),
+            el('th',{'data-sort-dep':'totalPagar',style:'cursor:pointer'},['Total a pagar']),
             el('th',{},['Detalle'])
           ])]),
           el('tbody',{})
@@ -35,13 +35,13 @@ export const Absenteeism=(mount,deps={})=>{
       el('div',{className:'table-wrap'},[
         el('table',{className:'table',id:'tblTotals'},[
           el('thead',{},[el('tr',{},[
-            el('th',{},['Sede']),
-            el('th',{},['Planeados']),
-            el('th',{},['Contratados']),
-            el('th',{},['No contratado']),
-            el('th',{},['Novedad sin reemplazo']),
-            el('th',{},['Total ausentismo']),
-            el('th',{},['Total a pagar']),
+            el('th',{'data-sort-sede':'sedeNombre',style:'cursor:pointer'},['Sede']),
+            el('th',{'data-sort-sede':'planeados',style:'cursor:pointer'},['Planeados']),
+            el('th',{'data-sort-sede':'contratados',style:'cursor:pointer'},['Contratados']),
+            el('th',{'data-sort-sede':'noContratado',style:'cursor:pointer'},['No contratado']),
+            el('th',{'data-sort-sede':'novSinReemplazo',style:'cursor:pointer'},['Novedad sin reemplazo']),
+            el('th',{'data-sort-sede':'ausentismoTotal',style:'cursor:pointer'},['Total ausentismo']),
+            el('th',{'data-sort-sede':'totalPagar',style:'cursor:pointer'},['Total a pagar']),
             el('th',{},['Detalle'])
           ])]),
           el('tbody',{})
@@ -54,11 +54,11 @@ export const Absenteeism=(mount,deps={})=>{
       el('div',{className:'table-wrap'},[
         el('table',{className:'table',id:'tblDetail'},[
           el('thead',{},[el('tr',{},[
-            el('th',{},['Fecha']),
-            el('th',{},['Sede']),
-            el('th',{},['Documento']),
-            el('th',{},['Nombre']),
-            el('th',{},['Estado'])
+            el('th',{'data-sort-detail':'fecha',style:'cursor:pointer'},['Fecha']),
+            el('th',{'data-sort-detail':'sede',style:'cursor:pointer'},['Sede']),
+            el('th',{'data-sort-detail':'documento',style:'cursor:pointer'},['Documento']),
+            el('th',{'data-sort-detail':'nombre',style:'cursor:pointer'},['Nombre']),
+            el('th',{'data-sort-detail':'estado',style:'cursor:pointer'},['Estado'])
           ])]),
           el('tbody',{})
         ])
@@ -78,11 +78,68 @@ export const Absenteeism=(mount,deps={})=>{
   let novedadRules={ byCode:new Map(), byName:new Map() };
   let totalsRows=[];
   let detailRowsCache=[];
+  let depSortKey='dependenciaNombre';
+  let depSortDir=1;
+  let sedeSortKey='sedeNombre';
+  let sedeSortDir=1;
+  let detailSortKey='fecha';
+  let detailSortDir=-1;
 
   qs('#btnRun',ui).addEventListener('click', run);
   qs('#btnExportSummary',ui).addEventListener('click',()=> exportSummaryExcel());
   qs('#btnExportSede',ui).addEventListener('click',()=> exportSedeExcel());
   qs('#btnExportDetail',ui).addEventListener('click',()=> exportDetailExcel());
+  ui.querySelectorAll('#tblDependency th[data-sort-dep]').forEach((th)=>{
+    th.addEventListener('click',()=>{
+      const key=String(th.getAttribute('data-sort-dep')||'').trim();
+      if(!key) return;
+      if(depSortKey===key) depSortDir*=-1;
+      else { depSortKey=key; depSortDir=1; }
+      renderDependency(qs('#opDate',ui).value);
+    });
+  });
+  ui.querySelectorAll('#tblTotals th[data-sort-sede]').forEach((th)=>{
+    th.addEventListener('click',()=>{
+      const key=String(th.getAttribute('data-sort-sede')||'').trim();
+      if(!key) return;
+      if(sedeSortKey===key) sedeSortDir*=-1;
+      else { sedeSortKey=key; sedeSortDir=1; }
+      renderTotals();
+    });
+  });
+  ui.querySelectorAll('#tblDetail th[data-sort-detail]').forEach((th)=>{
+    th.addEventListener('click',()=>{
+      const key=String(th.getAttribute('data-sort-detail')||'').trim();
+      if(!key) return;
+      if(detailSortKey===key) detailSortDir*=-1;
+      else { detailSortKey=key; detailSortDir=1; }
+      renderDetailRows();
+    });
+  });
+
+  function sortValue(row,key){
+    const value=row?.[key];
+    if(typeof value==='number') return value;
+    return String(value??'').toLowerCase();
+  }
+
+  function sortRows(rows,key,dir){
+    return [...(rows||[])].sort((a,b)=>{
+      const va=sortValue(a,key);
+      const vb=sortValue(b,key);
+      if(va===vb) return 0;
+      return va>vb?dir:-dir;
+    });
+  }
+
+  function updateSortIndicators(selector,attrName,activeKey,dir){
+    ui.querySelectorAll(selector).forEach((th)=>{
+      const base=th.dataset.baseLabel||th.textContent.replace(/\s[\^v▲▼]$/,'');
+      th.dataset.baseLabel=base;
+      const key=String(th.getAttribute(attrName)||'').trim();
+      th.textContent=key && key===activeKey ? `${base} ${dir===1?'▲':'▼'}` : base;
+    });
+  }
 
   async function run(){
     const date=qs('#opDate',ui).value;
@@ -230,8 +287,9 @@ export const Absenteeism=(mount,deps={})=>{
   }
 
   function renderDependency(date){
+    const rows=sortRows(dependencyRows,depSortKey,depSortDir);
     const tb=qs('#tblDependency tbody',ui);
-    tb.replaceChildren(...dependencyRows.map((r)=>{
+    tb.replaceChildren(...rows.map((r)=>{
       const tr=el('tr',{},[]);
       const btn=el('button',{className:'btn',type:'button'},['Ver']);
       btn.addEventListener('click',()=> renderDetail(r.dependenciaKey,r.dependenciaNombre,date));
@@ -256,6 +314,7 @@ export const Absenteeism=(mount,deps={})=>{
       totalPagar:acc.totalPagar+Number(r.totalPagar||0)
     }),{ planeados:0, contratados:0, noContratado:0, novSinReemplazo:0, ausentismoTotal:0, totalPagar:0 });
     qs('#totDependency',ui).textContent=`Total dependencias - Planeados: ${totals.planeados}, Contratados: ${totals.contratados}, No contratado: ${totals.noContratado}, Novedad sin reemplazo: ${totals.novSinReemplazo}, Total ausentismo: ${totals.ausentismoTotal}, Total a pagar: ${totals.totalPagar}`;
+    updateSortIndicators('#tblDependency th[data-sort-dep]','data-sort-dep',depSortKey,depSortDir);
   }
 
   function renderTotals(){
@@ -281,8 +340,9 @@ export const Absenteeism=(mount,deps={})=>{
     });
     const rows=Array.from(bySede.values()).sort((a,b)=> String(a.sedeNombre||'').localeCompare(String(b.sedeNombre||'')));
     totalsRows=rows;
+    const sortedRows=sortRows(rows,sedeSortKey,sedeSortDir);
     const tb=qs('#tblTotals tbody',ui);
-    tb.replaceChildren(...rows.map((r)=>{
+    tb.replaceChildren(...sortedRows.map((r)=>{
       const tr=el('tr',{},[]);
       const btn=el('button',{className:'btn',type:'button'},['Ver']);
       btn.addEventListener('click',()=> renderSedeDetail(r.sedeCodigo,r.sedeNombre));
@@ -300,6 +360,7 @@ export const Absenteeism=(mount,deps={})=>{
     }));
     const totalRange=rows.reduce((acc,r)=> acc+r.totalPagar,0);
     qs('#totRange',ui).textContent=`Total rango a pagar: ${totalRange}`;
+    updateSortIndicators('#tblTotals th[data-sort-sede]','data-sort-sede',sedeSortKey,sedeSortDir);
   }
 
   function renderDetail(dependenciaKey,dependenciaNombre,date){
@@ -343,15 +404,8 @@ export const Absenteeism=(mount,deps={})=>{
       }
     });
 
-    const tb=qs('#tblDetail tbody',ui);
-    tb.replaceChildren(...detailRows.map((r)=> el('tr',{},[
-      el('td',{},[r.fecha||'-']),
-      el('td',{},[r.sede||'-']),
-      el('td',{},[r.documento||'-']),
-      el('td',{},[r.nombre||'-']),
-      el('td',{},[r.estado||'-'])
-    ])));
     detailRowsCache=detailRows;
+    renderDetailRows();
   }
 
   function renderSedeDetail(sedeCodigo,sedeNombre){
@@ -396,15 +450,21 @@ export const Absenteeism=(mount,deps={})=>{
       }
     });
 
+    detailRowsCache=detailRows;
+    renderDetailRows();
+  }
+
+  function renderDetailRows(){
+    const rows=sortRows(detailRowsCache,detailSortKey,detailSortDir);
     const tb=qs('#tblDetail tbody',ui);
-    tb.replaceChildren(...detailRows.map((r)=> el('tr',{},[
+    tb.replaceChildren(...rows.map((r)=> el('tr',{},[
       el('td',{},[r.fecha||'-']),
       el('td',{},[r.sede||'-']),
       el('td',{},[r.documento||'-']),
       el('td',{},[r.nombre||'-']),
       el('td',{},[r.estado||'-'])
     ])));
-    detailRowsCache=detailRows;
+    updateSortIndicators('#tblDetail th[data-sort-detail]','data-sort-detail',detailSortKey,detailSortDir);
   }
 
   async function exportSummaryExcel(){

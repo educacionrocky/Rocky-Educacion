@@ -247,11 +247,15 @@ exports.finalizeDailyAbsenteeism = onSchedule(
     await ensureAusentismoAssignmentsForDate(day);
     await rebuildSedeStatusForDate(day, { force: true });
     const snapshotStats = await snapshotDailyState(day);
+    const summary = await computeOperationClosureSummary(day);
     await markDayClosed(day, {
       source: 'auto_scheduler',
+      closedByUid: 'system_scheduler',
+      closedByEmail: 'system@rockyedu.local',
+      ...summary,
       ...snapshotStats
     });
-    logger.info('finalizeDailyAbsenteeism completed', { day, ...snapshotStats });
+    logger.info('finalizeDailyAbsenteeism completed', { day, ...summary, ...snapshotStats });
   }
 );
 
@@ -260,13 +264,24 @@ exports.closeOperationDay = onRequest(
     region: 'us-central1'
   },
   async (req, res) => {
+    if (req.method === 'OPTIONS') {
+      res.set('Access-Control-Allow-Origin', '*');
+      res.set('Access-Control-Allow-Headers', 'Content-Type,Authorization,x-admin-token');
+      res.set('Access-Control-Allow-Methods', 'POST,OPTIONS');
+      res.status(204).send('');
+      return;
+    }
+    res.set('Access-Control-Allow-Origin', '*');
+
     if (req.method !== 'POST') {
       res.status(405).json({ ok: false, error: 'Method not allowed' });
       return;
     }
 
     const token = String(req.get('x-admin-token') || req.body?.token || req.query?.token || '').trim();
-    if (WHATSAPP_VERIFY_TOKEN && token !== WHATSAPP_VERIFY_TOKEN) {
+    const tokenAuthorized = Boolean(WHATSAPP_VERIFY_TOKEN && token === WHATSAPP_VERIFY_TOKEN);
+    const authCtx = tokenAuthorized ? { authorized: false } : await getManualClosureAuthContext(req);
+    if (!tokenAuthorized && !authCtx.authorized) {
       res.status(403).json({ ok: false, error: 'Forbidden' });
       return;
     }
@@ -293,11 +308,15 @@ exports.closeOperationDay = onRequest(
         await ensureAusentismoAssignmentsForDate(day);
         await rebuildSedeStatusForDate(day, { force: true });
         const snapshotStats = await snapshotDailyState(day);
+        const summary = await computeOperationClosureSummary(day);
         await markDayClosed(day, {
-          source: 'manual_http',
+          source: tokenAuthorized ? 'manual_http_token' : 'manual_http_auth',
+          closedByUid: tokenAuthorized ? null : authCtx.uid || null,
+          closedByEmail: tokenAuthorized ? null : authCtx.email || null,
+          ...summary,
           ...snapshotStats
         });
-        results.push({ day, status: 'closed', ...snapshotStats });
+        results.push({ day, status: 'closed', ...summary, ...snapshotStats });
       } catch (err) {
         logger.error('closeOperationDay error', { day, err: String(err?.message || err) });
         results.push({ day, status: 'error', error: String(err?.message || err) });
@@ -307,6 +326,32 @@ exports.closeOperationDay = onRequest(
     res.status(200).json({ ok: true, results });
   }
 );
+
+async function getManualClosureAuthContext(req) {
+  try {
+    const authHeader = String(req.get('authorization') || req.get('Authorization') || '').trim();
+    if (!authHeader.toLowerCase().startsWith('bearer ')) return { authorized: false };
+    const idToken = authHeader.slice(7).trim();
+    if (!idToken) return { authorized: false };
+    const decoded = await admin.auth().verifyIdToken(idToken);
+    const uid = String(decoded?.uid || '').trim();
+    if (!uid) return { authorized: false };
+    const userSnap = await admin.firestore().collection('users').doc(uid).get();
+    if (!userSnap.exists) return { authorized: false };
+    const user = userSnap.data() || {};
+    const role = String(userSnap.data()?.role || '').trim().toLowerCase();
+    const authorized = ['superadmin', 'admin', 'editor'].includes(role);
+    return {
+      authorized,
+      uid,
+      email: String(user.email || decoded.email || '').trim() || null,
+      role
+    };
+  } catch (err) {
+    logger.warn('getManualClosureAuthContext failed', { err: String(err?.message || err) });
+    return { authorized: false };
+  }
+}
 
 async function processIncomingMessage(docRef, data) {
   const row = data || {};
@@ -362,14 +407,15 @@ async function processIncomingMessage(docRef, data) {
       sede: String(emp.sedeNombre || emp.sedeCodigo || 'sin sede'),
       isSupernumerario
     });
-    await sendWhatsAppMainOptions(fromDigits, prompt, {
-      isSupernumerario,
-      phoneNumberIdHint: row.phoneNumberId
-    });
+    if (isSupernumerario) {
+      await sendWhatsAppSuperMainOptions(fromDigits, prompt, row.phoneNumberId);
+    } else {
+      await sendWhatsAppIdentityOptions(fromDigits, prompt, row.phoneNumberId);
+    }
     await sessionRef.set(
       {
         phone: fromDigits,
-        stage: 'awaiting_main_option',
+        stage: isSupernumerario ? 'awaiting_super_main_option' : 'awaiting_identity_option',
         employeeId: employee.id,
         employeeName: String(emp.nombre || null),
         employeeDocument: employeeDocument,
@@ -424,14 +470,15 @@ async function processIncomingMessage(docRef, data) {
     const isSupernumerario = Boolean(supernumerario);
     const prompt = buildMainPrompt({ nombre, cedula, sede, isSupernumerario });
 
-    await sendWhatsAppMainOptions(fromDigits, prompt, {
-      isSupernumerario,
-      phoneNumberIdHint: row.phoneNumberId
-    });
+    if (isSupernumerario) {
+      await sendWhatsAppSuperMainOptions(fromDigits, prompt, row.phoneNumberId);
+    } else {
+      await sendWhatsAppIdentityOptions(fromDigits, prompt, row.phoneNumberId);
+    }
     await sessionRef.set(
       {
         phone: fromDigits,
-        stage: 'awaiting_main_option',
+        stage: isSupernumerario ? 'awaiting_super_main_option' : 'awaiting_identity_option',
         employeeId: employee.id,
         employeeName: nombre,
         employeeDocument: cedula,
@@ -448,7 +495,68 @@ async function processIncomingMessage(docRef, data) {
     return;
   }
 
-  if (session.stage === 'awaiting_main_option' && session.employeeId) {
+  if (session.stage === 'awaiting_identity_option' && session.employeeId) {
+    const identityOption = parseIdentityOption(normalizedText);
+    if (identityOption === 'soy_yo') {
+      await sendWhatsAppDailyOptions(
+        fromDigits,
+        'Muy bien, ahora elige una opcion:',
+        row.phoneNumberId
+      );
+      await sessionRef.set(
+        {
+          stage: 'awaiting_daily_option',
+          lastDecision: 'soy_yo',
+          updatedAt: admin.firestore.FieldValue.serverTimestamp()
+        },
+        { merge: true }
+      );
+      await setIncomingProcess(docRef, 'processed', 'awaiting_daily_option');
+      return;
+    }
+    if (identityOption === 'no_soy_yo') {
+      await sendWhatsAppText(
+        fromDigits,
+        'Hola, no encontramos tu numero registrado en la base de datos, por favor escribe tu cedula.\n\nEscribelo sin puntos.',
+        row.phoneNumberId
+      );
+      await sessionRef.set(
+        {
+          phone: fromDigits,
+          stage: 'awaiting_document_lookup',
+          employeeId: admin.firestore.FieldValue.delete(),
+          employeeName: admin.firestore.FieldValue.delete(),
+          employeeDocument: admin.firestore.FieldValue.delete(),
+          employeeSede: admin.firestore.FieldValue.delete(),
+          employeePhone: admin.firestore.FieldValue.delete(),
+          isSupernumerario: admin.firestore.FieldValue.delete(),
+          supernumerarioId: admin.firestore.FieldValue.delete(),
+          updatedAt: admin.firestore.FieldValue.serverTimestamp()
+        },
+        { merge: true }
+      );
+      await setIncomingProcess(docRef, 'processed', 'switch_to_document_lookup');
+      return;
+    }
+    if (identityOption === 'actualizar_datos') {
+      await sendWhatsAppUpdateDataOptions(fromDigits, 'Muy bien, ahora elige una opcion:', row.phoneNumberId);
+      await sessionRef.set(
+        {
+          stage: 'awaiting_update_data_option',
+          lastDecision: 'actualizar_datos',
+          updatedAt: admin.firestore.FieldValue.serverTimestamp()
+        },
+        { merge: true }
+      );
+      await setIncomingProcess(docRef, 'processed', 'awaiting_update_data_option');
+      return;
+    }
+    await sendWhatsAppText(fromDigits, 'Respuesta no valida. Selecciona una opcion: SOY YO, NO SOY YO o ACTUALIZAR DATOS.', row.phoneNumberId);
+    await setIncomingProcess(docRef, 'ignored', 'invalid_identity_option');
+    return;
+  }
+
+  if (session.stage === 'awaiting_daily_option' && session.employeeId) {
     const empDoc = await admin.firestore().collection('employees').doc(String(session.employeeId)).get();
     if (!empDoc.exists) {
       await sendWhatsAppText(fromDigits, 'No fue posible encontrar tu registro de empleado. Por favor contacta a administracion.', row.phoneNumberId);
@@ -465,22 +573,8 @@ async function processIncomingMessage(docRef, data) {
       return;
     }
 
-    const isSupernumerario = Boolean(session.isSupernumerario);
-    const mainOption = parseMainOption(normalizedText, { isSupernumerario });
-    if (mainOption === 'si') {
-      if (isSupernumerario) {
-        await sendWhatsAppText(fromDigits, 'Escribe la sede en la que te encuentras.', row.phoneNumberId);
-        await sessionRef.set(
-          {
-            stage: 'awaiting_super_sede_search',
-            lastDecision: 'si',
-            updatedAt: admin.firestore.FieldValue.serverTimestamp()
-          },
-          { merge: true }
-        );
-        await setIncomingProcess(docRef, 'processed', 'awaiting_super_sede_search');
-        return;
-      }
+    const dailyOption = parseDailyOption(normalizedText);
+    if (dailyOption === 'trabajando') {
       const novelty = await resolveNovedadByCode('1');
       await finalizeAttendanceNow({
         sessionRef,
@@ -497,12 +591,12 @@ async function processIncomingMessage(docRef, data) {
           phone: fromDigits
         },
         processReason: 'attendance_registered_working',
-        lastDecision: 'si'
+        lastDecision: 'trabajando'
       });
       return;
     }
 
-    if (mainOption === 'compensatorio') {
+    if (dailyOption === 'compensatorio') {
       const novelty = await resolveNovedadByCode('7');
       await finalizeAttendanceNow({
         sessionRef,
@@ -524,7 +618,7 @@ async function processIncomingMessage(docRef, data) {
       return;
     }
 
-    if (mainOption === 'novedad') {
+    if (dailyOption === 'novedad') {
       await sendWhatsAppNovedadList(
         fromDigits,
         'Selecciona el tipo de novedad a registrar.',
@@ -542,13 +636,80 @@ async function processIncomingMessage(docRef, data) {
       return;
     }
 
-    if (mainOption === 'traslado') {
-      if (isSupernumerario) {
-        await sendWhatsAppText(fromDigits, 'Respuesta no valida. Por favor selecciona una opcion: TRABAJANDO o NOVEDAD.', row.phoneNumberId);
-        await setIncomingProcess(docRef, 'ignored', 'invalid_main_option_supernumerario');
-        return;
-      }
-      await sendWhatsAppText(fromDigits, 'Escribe el nombre de la sede a la que te trasladaron.', row.phoneNumberId);
+    await sendWhatsAppText(fromDigits, 'Respuesta no valida. Por favor selecciona una opcion: TRABAJANDO, COMPENSATORIO o NOVEDAD.', row.phoneNumberId);
+    await setIncomingProcess(docRef, 'ignored', 'invalid_daily_option');
+    return;
+  }
+
+  if (session.stage === 'awaiting_super_main_option' && session.employeeId) {
+    const empDoc = await admin.firestore().collection('employees').doc(String(session.employeeId)).get();
+    if (!empDoc.exists) {
+      await sendWhatsAppText(fromDigits, 'No fue posible encontrar tu registro de empleado. Por favor contacta a administracion.', row.phoneNumberId);
+      await setIncomingProcess(docRef, 'error', 'employee_not_found_in_super_main');
+      return;
+    }
+    if (!isEmployeeEligibleForRegistration(empDoc.data() || {}, todayInBogota())) {
+      await sendWhatsAppText(
+        fromDigits,
+        'Tu registro no esta habilitado para hoy por estado o fecha de retiro. Por favor contacta a administracion.',
+        row.phoneNumberId
+      );
+      await setIncomingProcess(docRef, 'error', 'employee_not_eligible_in_super_main');
+      return;
+    }
+    const superOption = parseSuperMainOption(normalizedText);
+    if (superOption === 'trabajando') {
+      await sendWhatsAppText(fromDigits, 'Escribe la sede en la que te encuentras.', row.phoneNumberId);
+      await sessionRef.set(
+        {
+          stage: 'awaiting_super_sede_search',
+          lastDecision: 'trabajando',
+          updatedAt: admin.firestore.FieldValue.serverTimestamp()
+        },
+        { merge: true }
+      );
+      await setIncomingProcess(docRef, 'processed', 'awaiting_super_sede_search');
+      return;
+    }
+    if (superOption === 'novedad') {
+      await sendWhatsAppNovedadList(fromDigits, 'Selecciona el tipo de novedad a registrar.', row.phoneNumberId);
+      await sessionRef.set(
+        {
+          stage: 'awaiting_novedad_type',
+          lastDecision: 'novedad',
+          updatedAt: admin.firestore.FieldValue.serverTimestamp()
+        },
+        { merge: true }
+      );
+      await setIncomingProcess(docRef, 'processed', 'awaiting_novedad_type_super');
+      return;
+    }
+    if (superOption === 'actualizar_datos') {
+      await sendWhatsAppUpdateDataOptions(fromDigits, 'Muy bien, ahora elige una opcion:', row.phoneNumberId);
+      await sessionRef.set(
+        {
+          stage: 'awaiting_update_data_option',
+          lastDecision: 'actualizar_datos',
+          updatedAt: admin.firestore.FieldValue.serverTimestamp()
+        },
+        { merge: true }
+      );
+      await setIncomingProcess(docRef, 'processed', 'awaiting_update_data_option_super');
+      return;
+    }
+    await sendWhatsAppText(fromDigits, 'Respuesta no valida. Por favor selecciona una opcion: TRABAJANDO, NOVEDAD o ACTUALIZAR DATOS.', row.phoneNumberId);
+    await setIncomingProcess(docRef, 'ignored', 'invalid_super_main_option');
+    return;
+  }
+
+  if (session.stage === 'awaiting_update_data_option' && session.employeeId) {
+    const updateOption = parseUpdateDataOption(normalizedText);
+    if (updateOption === 'traslado') {
+      await sendWhatsAppText(
+        fromDigits,
+        'Escribe una palabra clave de la SEDE a la que te trasladaron y luego seleccionada del listado:',
+        row.phoneNumberId
+      );
       await sessionRef.set(
         {
           stage: 'awaiting_traslado_search',
@@ -560,13 +721,64 @@ async function processIncomingMessage(docRef, data) {
       await setIncomingProcess(docRef, 'processed', 'awaiting_traslado_search');
       return;
     }
-
-    if (isSupernumerario) {
-      await sendWhatsAppText(fromDigits, 'Respuesta no valida. Por favor selecciona una opcion: TRABAJANDO o NOVEDAD.', row.phoneNumberId);
-    } else {
-      await sendWhatsAppText(fromDigits, 'Respuesta no valida. Por favor selecciona una opcion: TRABAJANDO, COMPENSATORIO, NOVEDAD o TRASLADO.', row.phoneNumberId);
+    if (updateOption === 'cambio_telefono') {
+      await sendWhatsAppText(fromDigits, 'Diligencia el numero de celular nuevo.', row.phoneNumberId);
+      await sessionRef.set(
+        {
+          stage: 'awaiting_phone_update',
+          lastDecision: 'cambio_telefono',
+          updatedAt: admin.firestore.FieldValue.serverTimestamp()
+        },
+        { merge: true }
+      );
+      await setIncomingProcess(docRef, 'processed', 'awaiting_phone_update');
+      return;
     }
-    await setIncomingProcess(docRef, 'ignored', 'invalid_main_option');
+    await sendWhatsAppText(fromDigits, 'Respuesta no valida. Selecciona una opcion: TRASLADO DE SEDE o CAMBIO DE TELEFONO.', row.phoneNumberId);
+    await setIncomingProcess(docRef, 'ignored', 'invalid_update_data_option');
+    return;
+  }
+
+  if (session.stage === 'awaiting_phone_update' && session.employeeId) {
+    const candidatePhone = normalizePhoneForStorage(text);
+    if (!candidatePhone || !isValidColombiaPhone(candidatePhone)) {
+      await sendWhatsAppText(fromDigits, 'Numero no valido. Escribe un celular valido de Colombia (10 digitos, con o sin 57).', row.phoneNumberId);
+      await setIncomingProcess(docRef, 'ignored', 'invalid_phone_update');
+      return;
+    }
+    await admin
+      .firestore()
+      .collection('employees')
+      .doc(String(session.employeeId))
+      .set(
+        {
+          telefono: candidatePhone,
+          lastModifiedAt: admin.firestore.FieldValue.serverTimestamp()
+        },
+        { merge: true }
+      );
+
+    await sendWhatsAppText(
+      fromDigits,
+      'Datos actualizados, si no te haz registrado por favor escribe nuevamente Hola y realiza el registro.',
+      row.phoneNumberId
+    );
+    await sessionRef.set(
+      {
+        stage: 'completed',
+        pendingAttendance: admin.firestore.FieldValue.delete(),
+        trasladoCandidates: admin.firestore.FieldValue.delete(),
+        superSedeCandidates: admin.firestore.FieldValue.delete(),
+        selectedNovedad: admin.firestore.FieldValue.delete(),
+        incapacidadDays: admin.firestore.FieldValue.delete(),
+        employeePhone: candidatePhone,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp()
+      },
+      { merge: true }
+    );
+    await setIncomingProcess(docRef, 'processed', 'employee_data_updated_phone', {
+      telefono: candidatePhone
+    });
     return;
   }
 
@@ -587,38 +799,34 @@ async function processIncomingMessage(docRef, data) {
       return;
     }
 
-    const candidates = await findSedeCandidatesByName(text);
+    const candidates = await findSedeCandidatesByName(text, 50);
     if (!candidates.length) {
       await sendWhatsAppText(fromDigits, 'No encontramos sedes con ese nombre. Escribe nuevamente una palabra clave de la sede.', row.phoneNumberId);
       await setIncomingProcess(docRef, 'ignored', 'super_sede_candidates_not_found');
       return;
     }
 
-    const sent = await sendWhatsAppSedeList(fromDigits, 'Selecciona la sede en la que te encuentras.', candidates, row.phoneNumberId);
+    const topCandidates = candidates.slice(0, 10);
+    const sent = await sendWhatsAppSedeList(fromDigits, 'Selecciona la sede en la que te encuentras.', topCandidates, row.phoneNumberId);
     if (!sent.ok) {
-      const alt = candidates.slice(0, 10).map((s, i) => `${i + 1}. ${s.nombre || s.codigo || '-'}`).join('\n');
+      const alt = topCandidates
+        .map((s, i) => `${i + 1}. ${String(s.codigo || '').trim() ? `[${String(s.codigo).trim()}] ` : ''}${s.nombre || s.codigo || '-'}`)
+        .join('\n');
       await sendWhatsAppText(fromDigits, `Selecciona una sede respondiendo el numero:\n${alt}`, row.phoneNumberId);
-      await sessionRef.set(
-        {
-          stage: 'awaiting_super_sede_pick',
-          superSedeCandidates: candidates.slice(0, 10).map((s, i) => ({
-            index: String(i + 1),
-            id: s.id,
-            codigo: s.codigo || null,
-            nombre: s.nombre || null
-          })),
-          updatedAt: admin.firestore.FieldValue.serverTimestamp()
-        },
-        { merge: true }
-      );
       await setIncomingProcess(docRef, 'processed', 'awaiting_super_sede_pick_text');
-      return;
+    }
+    if (candidates.length > 10) {
+      await sendWhatsAppText(
+        fromDigits,
+        `Se encontraron ${candidates.length} sedes. Si no ves la sede correcta, escribe una palabra mas especifica para filtrar mejor.`,
+        row.phoneNumberId
+      );
     }
 
     await sessionRef.set(
       {
         stage: 'awaiting_super_sede_pick',
-        superSedeCandidates: candidates.slice(0, 10).map((s, i) => ({
+        superSedeCandidates: topCandidates.map((s, i) => ({
           index: String(i + 1),
           id: s.id,
           codigo: s.codigo || null,
@@ -699,38 +907,34 @@ async function processIncomingMessage(docRef, data) {
       return;
     }
 
-    const candidates = await findSedeCandidatesByName(text);
+    const candidates = await findSedeCandidatesByName(text, 50);
     if (!candidates.length) {
       await sendWhatsAppText(fromDigits, 'No encontramos sedes con ese nombre. Escribe nuevamente una palabra clave de la sede.', row.phoneNumberId);
       await setIncomingProcess(docRef, 'ignored', 'sede_candidates_not_found');
       return;
     }
 
-    const sent = await sendWhatsAppSedeList(fromDigits, 'Selecciona la sede a la que te trasladaron.', candidates, row.phoneNumberId);
+    const topCandidates = candidates.slice(0, 10);
+    const sent = await sendWhatsAppSedeList(fromDigits, 'Selecciona la sede a la que te trasladaron.', topCandidates, row.phoneNumberId);
     if (!sent.ok) {
-      const alt = candidates.slice(0, 10).map((s, i) => `${i + 1}. ${s.nombre || s.codigo || '-'}`).join('\n');
+      const alt = topCandidates
+        .map((s, i) => `${i + 1}. ${String(s.codigo || '').trim() ? `[${String(s.codigo).trim()}] ` : ''}${s.nombre || s.codigo || '-'}`)
+        .join('\n');
       await sendWhatsAppText(fromDigits, `Selecciona una sede respondiendo el numero:\n${alt}`, row.phoneNumberId);
-      await sessionRef.set(
-        {
-          stage: 'awaiting_traslado_pick',
-          trasladoCandidates: candidates.slice(0, 10).map((s, i) => ({
-            index: String(i + 1),
-            id: s.id,
-            codigo: s.codigo || null,
-            nombre: s.nombre || null
-          })),
-          updatedAt: admin.firestore.FieldValue.serverTimestamp()
-        },
-        { merge: true }
-      );
       await setIncomingProcess(docRef, 'processed', 'awaiting_traslado_pick_text');
-      return;
+    }
+    if (candidates.length > 10) {
+      await sendWhatsAppText(
+        fromDigits,
+        `Se encontraron ${candidates.length} sedes. Si no ves la sede correcta, escribe una palabra mas especifica para filtrar mejor.`,
+        row.phoneNumberId
+      );
     }
 
     await sessionRef.set(
       {
         stage: 'awaiting_traslado_pick',
-        trasladoCandidates: candidates.slice(0, 10).map((s, i) => ({
+        trasladoCandidates: topCandidates.map((s, i) => ({
           index: String(i + 1),
           id: s.id,
           codigo: s.codigo || null,
@@ -780,28 +984,26 @@ async function processIncomingMessage(docRef, data) {
         { merge: true }
       );
 
-    const novelty = await resolveNovedadByCode('1');
-    await finalizeAttendanceNow({
-      sessionRef,
-      employeeId: String(session.employeeId),
+    await sendWhatsAppText(
       fromDigits,
-      row,
-      docRef,
-      pendingAttendance: {
-        asistio: true,
-        novedadCodigo: novelty.codigo,
-        novedadNombre: novelty.nombre,
-        novedad: novelty.nombre,
-        messageId: row.messageId || docRef.id,
-        phone: fromDigits,
-        sedeCodigo: selectedSede.codigo || null,
-        sedeNombre: selectedSede.nombre || null
+      'Datos actualizados, si no te haz registrado por favor escribe nuevamente Hola y realiza el registro.',
+      row.phoneNumberId
+    );
+    await sessionRef.set(
+      {
+        stage: 'completed',
+        trasladoCandidates: admin.firestore.FieldValue.delete(),
+        superSedeCandidates: admin.firestore.FieldValue.delete(),
+        pendingAttendance: admin.firestore.FieldValue.delete(),
+        selectedNovedad: admin.firestore.FieldValue.delete(),
+        incapacidadDays: admin.firestore.FieldValue.delete(),
+        employeeSede: String(selectedSede.nombre || selectedSede.codigo || '').trim() || null,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp()
       },
-      processReason: 'attendance_registered_traslado',
-      processExtra: {
-        sedeCodigo: selectedSede.codigo || null
-      },
-      lastDecision: 'traslado'
+      { merge: true }
+    );
+    await setIncomingProcess(docRef, 'processed', 'employee_data_updated_traslado', {
+      sedeCodigo: selectedSede.codigo || null
     });
     return;
   }
@@ -1043,17 +1245,36 @@ async function finalizeAttendanceNow({
   return saved;
 }
 
-function parseMainOption(normalizedText, opts = {}) {
-  const isSupernumerario = Boolean(opts.isSupernumerario);
+function parseIdentityOption(normalizedText) {
   const t = String(normalizedText || '').trim();
-  if (['trabajando', 'si', 'sí', 'ok', '1', 'main_trabajando'].includes(t)) return 'si';
-  if (isSupernumerario) {
-    if (['novedad', '2', 'main_novedad'].includes(t)) return 'novedad';
-    return null;
+  if (['soy yo', 'soyyo', 'si', 'sí', '1', 'id_soy_yo'].includes(t)) return 'soy_yo';
+  if (['no soy yo', 'nosoyyo', 'no', '2', 'id_no_soy_yo'].includes(t)) return 'no_soy_yo';
+  if (['actualizar datos', 'actualizar', '3', 'id_actualizar_datos'].includes(t)) return 'actualizar_datos';
+  return null;
+}
+
+function parseDailyOption(normalizedText) {
+  const t = String(normalizedText || '').trim();
+  if (['trabajando', '1', 'daily_trabajando'].includes(t)) return 'trabajando';
+  if (['compensatorio', '2', 'daily_compensatorio'].includes(t)) return 'compensatorio';
+  if (['novedad', '3', 'daily_novedad'].includes(t)) return 'novedad';
+  return null;
+}
+
+function parseSuperMainOption(normalizedText) {
+  const t = String(normalizedText || '').trim();
+  if (['trabajando', '1', 'super_trabajando'].includes(t)) return 'trabajando';
+  if (['novedad', '2', 'super_novedad'].includes(t)) return 'novedad';
+  if (['actualizar datos', 'actualizar', '3', 'super_actualizar_datos'].includes(t)) return 'actualizar_datos';
+  return null;
+}
+
+function parseUpdateDataOption(normalizedText) {
+  const t = String(normalizedText || '').trim();
+  if (['traslado', 'traslado de sede', '1', 'upd_traslado_sede'].includes(t)) return 'traslado';
+  if (['cambio de telefono', 'cambio telefono', 'telefono', 'tel', '2', 'upd_cambio_telefono'].includes(t)) {
+    return 'cambio_telefono';
   }
-  if (['compensatorio', '2', 'main_compensatorio'].includes(t)) return 'compensatorio';
-  if (['novedad', '3', 'main_novedad'].includes(t)) return 'novedad';
-  if (['traslado', 'otra sede', 'otra_sede', 'otrasede', '4', 'main_traslado'].includes(t)) return 'traslado';
   return null;
 }
 
@@ -1104,6 +1325,14 @@ function normalizePhoneForStorage(phoneDigits) {
   if (d.startsWith('57')) return d;
   if (d.length === 10) return `57${d}`;
   return d;
+}
+
+function isValidColombiaPhone(phone) {
+  const digits = digitsOnly(phone);
+  if (!digits) return false;
+  if (digits.length === 10) return true;
+  if (digits.length === 12 && digits.startsWith('57')) return true;
+  return false;
 }
 
 async function resolveNovedadByCode(code) {
@@ -1608,6 +1837,85 @@ async function rebuildSedeStatusForDate(fecha, opts = {}) {
   await batch.commit();
 }
 
+async function computeOperationClosureSummary(fecha) {
+  const day = String(fecha || '').trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) {
+    return { planeados: 0, contratados: 0, registrados: 0, faltan: 0, sobran: 0, ausentismos: 0 };
+  }
+  const db = admin.firestore();
+  const statusSnap = await db.collection('sede_status').where('fecha', '==', day).get();
+  if (!statusSnap.empty) {
+    let planeados = 0;
+    let contratados = 0;
+    let registrados = 0;
+    let ausentismos = 0;
+    for (const d of statusSnap.docs) {
+      const r = d.data() || {};
+      planeados += Number(r.operariosPlaneados || r.operariosEsperados || 0) || 0;
+      contratados += Number(r.operariosContratados || 0) || 0;
+      registrados += Number(r.operariosRegistrados || r.operariosPresentes || 0) || 0;
+      ausentismos += Number(r.novedadSinReemplazo || 0) || 0;
+    }
+    return {
+      planeados,
+      contratados,
+      registrados,
+      faltan: Math.max(0, planeados - registrados),
+      sobran: Math.max(0, registrados - planeados),
+      ausentismos
+    };
+  }
+
+  const [sedesSnap, employeesSnap, attendanceSnap, replacementsSnap, novedadesSnap, superSnap] = await Promise.all([
+    db.collection('sedes').get(),
+    db.collection('employees').get(),
+    db.collection('attendance').where('fecha', '==', day).get(),
+    db.collection('import_replacements').where('fecha', '==', day).get(),
+    db.collection('novedades').get(),
+    db.collection('supernumerarios').where('estado', '==', 'activo').get()
+  ]);
+
+  const planeados = sedesSnap.docs.reduce((acc, d) => acc + (Number(d.data()?.numeroOperarios || 0) || 0), 0);
+  const superDocs = new Set(
+    superSnap.docs
+      .map((d) => d.data() || {})
+      .filter((row) => isEmployeeActiveOnDate(row, day))
+      .map((row) => String(row.documento || '').trim())
+      .filter(Boolean)
+  );
+  let contratados = 0;
+  for (const d of employeesSnap.docs) {
+    const emp = d.data() || {};
+    if (!isEmployeeEligibleForRegistration(emp, day)) continue;
+    const docNum = String(emp.documento || '').trim();
+    if (docNum && superDocs.has(docNum)) continue;
+    contratados += 1;
+  }
+  const registrados = attendanceSnap.size;
+  const replacedAttendanceKey = new Set();
+  for (const d of replacementsSnap.docs) {
+    const repl = d.data() || {};
+    if (String(repl.decision || '').trim() !== 'reemplazo') continue;
+    const empId = String(repl.empleadoId || '').trim();
+    if (!empId) continue;
+    replacedAttendanceKey.add(`${day}_${empId}`);
+  }
+  const novedadRules = buildNovedadReplacementRules(novedadesSnap.docs.map((d) => d.data() || {}));
+  let ausentismos = 0;
+  for (const d of attendanceSnap.docs) {
+    const row = d.data() || {};
+    if (attendanceCountsAsAusentismo(row, String(d.id || '').trim(), replacedAttendanceKey, novedadRules)) ausentismos += 1;
+  }
+  return {
+    planeados,
+    contratados,
+    registrados,
+    faltan: Math.max(0, planeados - registrados),
+    sobran: Math.max(0, registrados - planeados),
+    ausentismos
+  };
+}
+
 async function isDayClosed(fecha) {
   const day = String(fecha || '').trim();
   if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return false;
@@ -1960,22 +2268,14 @@ async function sendWhatsAppText(to, bodyText, phoneNumberIdHint = null) {
   );
 }
 
-async function sendWhatsAppMainOptions(to, prompt, opts = {}) {
-  const phoneNumberIdHint = opts?.phoneNumberIdHint || null;
-  const isSupernumerario = Boolean(opts?.isSupernumerario);
+async function sendWhatsAppIdentityOptions(to, prompt, phoneNumberIdHint = null) {
   const toDigits = digitsOnly(to);
   if (!toDigits) return { ok: false, error: 'missing_to' };
-  const rows = isSupernumerario
-    ? [
-        { id: 'main_trabajando', title: 'TRABAJANDO' },
-        { id: 'main_novedad', title: 'NOVEDAD' }
-      ]
-    : [
-        { id: 'main_trabajando', title: 'TRABAJANDO' },
-        { id: 'main_compensatorio', title: 'COMPENSATORIO' },
-        { id: 'main_novedad', title: 'NOVEDAD' },
-        { id: 'main_traslado', title: 'TRASLADO' }
-      ];
+  const rows = [
+    { id: 'id_soy_yo', title: 'SOY YO' },
+    { id: 'id_no_soy_yo', title: 'NO SOY YO' },
+    { id: 'id_actualizar_datos', title: 'ACTUALIZAR DATOS' }
+  ];
   const interactiveResp = await sendWhatsAppPayload(
     toDigits,
     {
@@ -1988,7 +2288,7 @@ async function sendWhatsAppMainOptions(to, prompt, opts = {}) {
           button: 'Ver opciones',
           sections: [
             {
-              title: 'Opciones de registro',
+              title: 'Validacion de identidad',
               rows
             }
           ]
@@ -1998,14 +2298,94 @@ async function sendWhatsAppMainOptions(to, prompt, opts = {}) {
     phoneNumberIdHint
   );
   if (interactiveResp.ok) return interactiveResp;
-  const fallbackOptions = isSupernumerario
-    ? 'TRABAJANDO o NOVEDAD'
-    : 'TRABAJANDO, COMPENSATORIO, NOVEDAD o TRASLADO';
   return sendWhatsAppText(
     toDigits,
-    `${prompt}\nResponde una opcion: ${fallbackOptions}.`,
+    `${prompt}\nResponde una opcion: SOY YO, NO SOY YO o ACTUALIZAR DATOS.`,
     phoneNumberIdHint
   );
+}
+
+async function sendWhatsAppDailyOptions(to, prompt, phoneNumberIdHint = null) {
+  const toDigits = digitsOnly(to);
+  if (!toDigits) return { ok: false, error: 'missing_to' };
+  const rows = [
+    { id: 'daily_trabajando', title: 'TRABAJANDO' },
+    { id: 'daily_compensatorio', title: 'COMPENSATORIO' },
+    { id: 'daily_novedad', title: 'NOVEDAD' }
+  ];
+  const interactiveResp = await sendWhatsAppPayload(
+    toDigits,
+    {
+      type: 'interactive',
+      interactive: {
+        type: 'list',
+        body: { text: String(prompt || '').trim() || 'Elige una opcion.' },
+        footer: { text: 'Capcol - Registro Diario' },
+        action: {
+          button: 'Ver opciones',
+          sections: [{ title: 'Registro diario', rows }]
+        }
+      }
+    },
+    phoneNumberIdHint
+  );
+  if (interactiveResp.ok) return interactiveResp;
+  return sendWhatsAppText(toDigits, 'Responde una opcion: TRABAJANDO, COMPENSATORIO o NOVEDAD.', phoneNumberIdHint);
+}
+
+async function sendWhatsAppSuperMainOptions(to, prompt, phoneNumberIdHint = null) {
+  const toDigits = digitsOnly(to);
+  if (!toDigits) return { ok: false, error: 'missing_to' };
+  const rows = [
+    { id: 'super_trabajando', title: 'TRABAJANDO' },
+    { id: 'super_novedad', title: 'NOVEDAD' },
+    { id: 'super_actualizar_datos', title: 'ACTUALIZAR DATOS' }
+  ];
+  const interactiveResp = await sendWhatsAppPayload(
+    toDigits,
+    {
+      type: 'interactive',
+      interactive: {
+        type: 'list',
+        body: { text: String(prompt || '').trim() || 'Elige una opcion.' },
+        footer: { text: 'Capcol - Registro Diario' },
+        action: {
+          button: 'Ver opciones',
+          sections: [{ title: 'Opciones supernumerario', rows }]
+        }
+      }
+    },
+    phoneNumberIdHint
+  );
+  if (interactiveResp.ok) return interactiveResp;
+  return sendWhatsAppText(toDigits, `${prompt}\nResponde una opcion: TRABAJANDO, NOVEDAD o ACTUALIZAR DATOS.`, phoneNumberIdHint);
+}
+
+async function sendWhatsAppUpdateDataOptions(to, prompt, phoneNumberIdHint = null) {
+  const toDigits = digitsOnly(to);
+  if (!toDigits) return { ok: false, error: 'missing_to' };
+  const rows = [
+    { id: 'upd_traslado_sede', title: 'TRASLADO DE SEDE' },
+    { id: 'upd_cambio_telefono', title: 'CAMBIO DE TELEFONO' }
+  ];
+  const interactiveResp = await sendWhatsAppPayload(
+    toDigits,
+    {
+      type: 'interactive',
+      interactive: {
+        type: 'list',
+        body: { text: String(prompt || '').trim() || 'Selecciona el cambio a realizar.' },
+        footer: { text: 'Capcol - Registro Diario' },
+        action: {
+          button: 'Actualizar',
+          sections: [{ title: 'Actualizacion de datos', rows }]
+        }
+      }
+    },
+    phoneNumberIdHint
+  );
+  if (interactiveResp.ok) return interactiveResp;
+  return sendWhatsAppText(toDigits, 'Responde una opcion: TRASLADO DE SEDE o CAMBIO DE TELEFONO.', phoneNumberIdHint);
 }
 
 async function sendWhatsAppNovedadList(to, prompt, phoneNumberIdHint = null) {
@@ -2051,11 +2431,15 @@ async function sendWhatsAppSedeList(to, prompt, sedes, phoneNumberIdHint = null)
   const rows = (Array.isArray(sedes) ? sedes : [])
     .filter(Boolean)
     .slice(0, 10)
-    .map((s, i) => ({
+    .map((s, i) => {
+      const nombre = String(s.nombre || s.codigo || `SEDE ${i + 1}`).trim();
+      const codigo = String(s.codigo || '').trim();
+      return {
       id: `sede_pick_${String(s.id || '').trim()}`,
-      title: String(s.nombre || s.codigo || `SEDE ${i + 1}`).slice(0, 24),
-      description: String(s.codigo || '').trim().slice(0, 72) || undefined
-    }))
+      title: nombre.slice(0, 24),
+      description: `${codigo ? `${codigo} - ` : ''}${nombre}`.slice(0, 72) || undefined
+    };
+    })
     .filter((r) => r.id !== 'sede_pick_');
   if (!rows.length) return { ok: false, error: 'no_rows' };
   return sendWhatsAppPayload(

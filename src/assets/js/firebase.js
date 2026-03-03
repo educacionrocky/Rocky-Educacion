@@ -655,6 +655,11 @@ export function streamImportHistory(onData,max=200){
   const qy=query(ref,orderBy('ts','desc'),limit(max));
   return onSnapshot(qy,(snap)=> onData(snap.docs.map((d)=>({ id:d.id, ...d.data() }))));
 }
+export function streamDailyClosures(onData,max=200){
+  const ref=collection(db,'daily_closures');
+  const qy=query(ref,orderBy('fecha','desc'),limit(max));
+  return onSnapshot(qy,(snap)=> onData(snap.docs.map((d)=>({ id:d.id, ...d.data() }))));
+}
 export function streamWhatsAppIncoming(onData,max=200,onError){
   const ref=collection(db,'whatsapp_incoming');
   const qy=query(ref,orderBy('receivedAt','desc'),limit(max));
@@ -713,6 +718,28 @@ export async function listImportReplacementsRange(dateFrom,dateTo){
   const qy=query(ref, where('fecha','>=',dateFrom), where('fecha','<=',dateTo), orderBy('fecha','asc'));
   const snap=await getDocs(qy);
   return snap.docs.map((d)=>({ id:d.id, ...d.data() }));
+}
+
+export async function closeOperationDayManual(fecha){
+  const day=String(fecha||'').trim();
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(day)) throw new Error('Fecha invalida.');
+  const user=auth.currentUser;
+  if(!user) throw new Error('Sesion no iniciada.');
+  const idToken=await user.getIdToken();
+  const resp=await fetch('/api/operation/close',{
+    method:'POST',
+    headers:{
+      'Content-Type':'application/json',
+      Authorization:`Bearer ${idToken}`
+    },
+    body:JSON.stringify({ date:day })
+  });
+  let data={};
+  try{ data=await resp.json(); }catch{}
+  if(!resp.ok || data?.ok===false){
+    throw new Error(String(data?.error||`Error HTTP ${resp.status}`));
+  }
+  return data;
 }
 
 export async function confirmImportOperation(payload){

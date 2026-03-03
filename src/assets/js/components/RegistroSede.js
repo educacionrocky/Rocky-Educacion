@@ -11,52 +11,79 @@ export const RegistroSede = (mount, deps = {}) => {
     ]),
     el('div', { className: 'section-block mt-2' }, [
       el('h3', { className: 'section-title' }, ['Resumen por dependencia']),
-      el('div', { className: 'table-wrap' }, [
+      el('div', { className: 'form-row mt-1' }, [
+        el('div', {}, [
+          el('label', { className: 'label' }, ['Buscar dependencia']),
+          el('input', { id: 'depSearch', className: 'input', placeholder: 'Nombre de dependencia...' })
+        ]),
+        el('div', {}, [
+          el('label', { className: 'label' }, ['Filtro']),
+          el('select', { id: 'depFilter', className: 'input' }, [
+            el('option', { value: 'all' }, ['Todas']),
+            el('option', { value: 'faltantes' }, ['Con faltantes']),
+            el('option', { value: 'sobrantes' }, ['Con sobrantes'])
+          ])
+        ])
+      ]),
+      el('div', { className: 'table-wrap mt-2' }, [
         el('table', { className: 'table', id: 'tblDependency' }, [
           el('thead', {}, [el('tr', {}, [
-            el('th', {}, ['Dependencia']),
-            el('th', {}, ['Planeados']),
-            el('th', {}, ['Contratados']),
-            el('th', {}, ['No contratado']),
-            el('th', {}, ['Novedad sin reemplazo']),
-            el('th', {}, ['Total ausentismo']),
-            el('th', {}, ['Total a pagar']),
+            el('th', { 'data-sort-dep': 'dependenciaNombre', style: 'cursor:pointer' }, ['Dependencia']),
+            el('th', { 'data-sort-dep': 'nroSedes', style: 'cursor:pointer' }, ['Nro sedes']),
+            el('th', { 'data-sort-dep': 'planeados', style: 'cursor:pointer' }, ['Planeados']),
+            el('th', { 'data-sort-dep': 'contratados', style: 'cursor:pointer' }, ['Contratados']),
+            el('th', { 'data-sort-dep': 'registrados', style: 'cursor:pointer' }, ['Registrados']),
+            el('th', { 'data-sort-dep': 'faltantes', style: 'cursor:pointer' }, ['Faltantes']),
+            el('th', { 'data-sort-dep': 'sobrantes', style: 'cursor:pointer' }, ['Sobrantes']),
             el('th', {}, ['Detalle'])
           ])]),
           el('tbody', {})
         ])
       ]),
-      el('p', { id: 'totDependency', className: 'text-muted' }, ['Total dependencias - Planeados: 0, Contratados: 0, No contratado: 0, Novedad sin reemplazo: 0, Total ausentismo: 0, Total a pagar: 0'])
+      el('p', { id: 'totDependency', className: 'text-muted' }, ['Total dependencias - Sedes: 0, Planeados: 0, Contratados: 0, Registrados: 0, Faltantes: 0, Sobrantes: 0'])
     ]),
     el('div', { className: 'section-block mt-2' }, [
       el('h3', { className: 'section-title' }, ['Resumen por sede']),
-      el('div', { className: 'table-wrap' }, [
+      el('div', { className: 'form-row mt-1' }, [
+        el('div', {}, [
+          el('label', { className: 'label' }, ['Buscar sede']),
+          el('input', { id: 'sedeSearch', className: 'input', placeholder: 'Nombre o codigo de sede...' })
+        ]),
+        el('div', {}, [
+          el('label', { className: 'label' }, ['Filtro']),
+          el('select', { id: 'sedeFilter', className: 'input' }, [
+            el('option', { value: 'all' }, ['Todas']),
+            el('option', { value: 'faltantes' }, ['Con faltantes']),
+            el('option', { value: 'sobrantes' }, ['Con sobrantes'])
+          ])
+        ])
+      ]),
+      el('div', { className: 'table-wrap mt-2' }, [
         el('table', { className: 'table', id: 'tblTotals' }, [
           el('thead', {}, [el('tr', {}, [
-            el('th', {}, ['Sede']),
-            el('th', {}, ['Planeados']),
-            el('th', {}, ['Contratados']),
-            el('th', {}, ['No contratado']),
-            el('th', {}, ['Novedad sin reemplazo']),
-            el('th', {}, ['Total ausentismo']),
-            el('th', {}, ['Total a pagar']),
+            el('th', { 'data-sort-sede': 'sedeNombre', style: 'cursor:pointer' }, ['Sede']),
+            el('th', { 'data-sort-sede': 'planeados', style: 'cursor:pointer' }, ['Planeados']),
+            el('th', { 'data-sort-sede': 'contratados', style: 'cursor:pointer' }, ['Contratados']),
+            el('th', { 'data-sort-sede': 'registrados', style: 'cursor:pointer' }, ['Registrados']),
+            el('th', { 'data-sort-sede': 'faltantes', style: 'cursor:pointer' }, ['Faltantes']),
+            el('th', { 'data-sort-sede': 'sobrantes', style: 'cursor:pointer' }, ['Sobrantes']),
             el('th', {}, ['Detalle'])
           ])]),
           el('tbody', {})
         ])
       ]),
-      el('p', { id: 'totRange', className: 'text-muted' }, ['Total del dia a pagar: 0'])
+      el('p', { id: 'totRange', className: 'text-muted' }, ['Total sedes - Planeados: 0, Contratados: 0, Registrados: 0, Faltantes: 0, Sobrantes: 0'])
     ]),
     el('div', { className: 'section-block mt-2' }, [
       el('h3', { id: 'detailTitle', className: 'section-title' }, ['Detalle']),
       el('div', { className: 'table-wrap' }, [
         el('table', { className: 'table', id: 'tblDetail' }, [
           el('thead', {}, [el('tr', {}, [
-            el('th', {}, ['Fecha']),
-            el('th', {}, ['Sede']),
-            el('th', {}, ['Documento']),
-            el('th', {}, ['Nombre']),
-            el('th', {}, ['Estado'])
+            el('th', { 'data-sort-detail': 'fecha', style: 'cursor:pointer' }, ['Fecha']),
+            el('th', { 'data-sort-detail': 'sede', style: 'cursor:pointer' }, ['Sede']),
+            el('th', { 'data-sort-detail': 'documento', style: 'cursor:pointer' }, ['Documento']),
+            el('th', { 'data-sort-detail': 'nombre', style: 'cursor:pointer' }, ['Nombre']),
+            el('th', { 'data-sort-detail': 'estado', style: 'cursor:pointer' }, ['Estado'])
           ])]),
           el('tbody', {})
         ])
@@ -67,12 +94,76 @@ export const RegistroSede = (mount, deps = {}) => {
   const msg = qs('#msg', ui);
   let sedeDailyRows = [];
   let dependencyRows = [];
+  let totalsRows = [];
   let attendanceByKey = new Map();
+  let contractedEmployeesBySede = new Map();
   let replByEmpDate = new Map();
   let replacementSuperByDateDoc = new Set();
   let novedadRules = { byCode: new Map(), byName: new Map() };
+  let depSortKey = 'dependenciaNombre';
+  let depSortDir = 1;
+  let sedeSortKey = 'sedeNombre';
+  let sedeSortDir = 1;
+  let detailSortKey = 'fecha';
+  let detailSortDir = -1;
 
   qs('#btnRun', ui).addEventListener('click', run);
+  qs('#depSearch', ui).addEventListener('input', () => renderDependency(currentDate()));
+  qs('#depFilter', ui).addEventListener('change', () => renderDependency(currentDate()));
+  qs('#sedeSearch', ui).addEventListener('input', () => renderTotals(currentDate()));
+  qs('#sedeFilter', ui).addEventListener('change', () => renderTotals(currentDate()));
+  ui.querySelectorAll('#tblDependency th[data-sort-dep]').forEach((th) => {
+    th.addEventListener('click', () => {
+      const key = String(th.getAttribute('data-sort-dep') || '').trim();
+      if (!key) return;
+      if (depSortKey === key) depSortDir *= -1;
+      else { depSortKey = key; depSortDir = 1; }
+      renderDependency(currentDate());
+    });
+  });
+  ui.querySelectorAll('#tblTotals th[data-sort-sede]').forEach((th) => {
+    th.addEventListener('click', () => {
+      const key = String(th.getAttribute('data-sort-sede') || '').trim();
+      if (!key) return;
+      if (sedeSortKey === key) sedeSortDir *= -1;
+      else { sedeSortKey = key; sedeSortDir = 1; }
+      renderTotals(currentDate());
+    });
+  });
+  ui.querySelectorAll('#tblDetail th[data-sort-detail]').forEach((th) => {
+    th.addEventListener('click', () => {
+      const key = String(th.getAttribute('data-sort-detail') || '').trim();
+      if (!key) return;
+      if (detailSortKey === key) detailSortDir *= -1;
+      else { detailSortKey = key; detailSortDir = 1; }
+      renderDetailRows();
+    });
+  });
+  let detailRowsCache = [];
+
+  function updateSortIndicators(selector, attrName, activeKey, dir) {
+    ui.querySelectorAll(selector).forEach((th) => {
+      const base = th.dataset.baseLabel || th.textContent.replace(/\s[\^v▲▼]$/, '');
+      th.dataset.baseLabel = base;
+      const key = String(th.getAttribute(attrName) || '').trim();
+      th.textContent = key && key === activeKey ? `${base} ${dir === 1 ? '▲' : '▼'}` : base;
+    });
+  }
+
+  function sortValue(row, key) {
+    const value = row?.[key];
+    if (typeof value === 'number') return value;
+    return String(value ?? '').toLowerCase();
+  }
+
+  function sortRows(rows, key, dir) {
+    return [...(rows || [])].sort((a, b) => {
+      const va = sortValue(a, key);
+      const vb = sortValue(b, key);
+      if (va === vb) return 0;
+      return va > vb ? dir : -dir;
+    });
+  }
 
   async function run() {
     const date = todayBogota();
@@ -110,8 +201,6 @@ export const RegistroSede = (mount, deps = {}) => {
 
       attendanceByKey = new Map();
       (attendance || []).forEach((a) => {
-        const attDoc = String(a.documento || '').trim();
-        if (attDoc && replacementSuperByDateDoc.has(`${a.fecha || ''}|${attDoc}`)) return;
         const key = `${a.fecha || ''}|${a.sedeCodigo || ''}`;
         if (!attendanceByKey.has(key)) attendanceByKey.set(key, []);
         attendanceByKey.get(key).push(a);
@@ -125,6 +214,7 @@ export const RegistroSede = (mount, deps = {}) => {
           .filter(Boolean)
       );
       const contratadosBySede = new Map();
+      contractedEmployeesBySede = new Map();
       (employees || []).forEach((e) => {
         if (!isEmployeeExpectedForDate(e, date)) return;
         const doc = String(e.documento || '').trim();
@@ -132,6 +222,11 @@ export const RegistroSede = (mount, deps = {}) => {
         const sedeCode = String(e.sedeCodigo || '').trim();
         if (!sedeCode) return;
         contratadosBySede.set(sedeCode, Number(contratadosBySede.get(sedeCode) || 0) + 1);
+        if (!contractedEmployeesBySede.has(sedeCode)) contractedEmployeesBySede.set(sedeCode, []);
+        contractedEmployeesBySede.get(sedeCode).push({
+          documento: doc || '-',
+          nombre: String(e.nombre || '-').trim() || '-'
+        });
       });
 
       sedeDailyRows = (sedes || [])
@@ -144,15 +239,9 @@ export const RegistroSede = (mount, deps = {}) => {
           const planeadosRaw = s.numeroOperarios ?? status.operariosPlaneados ?? status.operariosEsperados ?? 0;
           const planeados = parseOperatorCount(planeadosRaw);
           const contratados = Number(contratadosBySede.get(sedeCode) || 0);
-          const noContratado = Math.max(0, planeados - contratados);
-          const novSinReemplazo = atts.filter((a) => {
-            if (a.asistio === true) return false;
-            const rep = replByEmpDate.get(`${a.fecha || ''}|${a.empleadoId || ''}`);
-            if (rep && rep.decision === 'reemplazo') return false;
-            return attendanceRequiresReplacementForSummary(a, novedadRules);
-          }).length;
-          const ausentismoTotal = noContratado + novSinReemplazo;
-          const totalPagar = Math.max(0, planeados - noContratado - novSinReemplazo);
+          const registrados = atts.length;
+          const faltantes = Math.max(0, planeados - registrados);
+          const sobrantes = Math.max(0, registrados - planeados);
           const meta = sedeMetaByCode.get(sedeCode) || {};
           const dependenciaCodigo = String(meta.dependenciaCodigo || '').trim();
           const dependenciaNombre = String(meta.dependenciaNombre || '').trim() || 'Sin dependencia';
@@ -166,10 +255,9 @@ export const RegistroSede = (mount, deps = {}) => {
             dependenciaKey,
             planeados,
             contratados,
-            noContratado,
-            novSinReemplazo,
-            ausentismoTotal,
-            totalPagar
+            registrados,
+            faltantes,
+            sobrantes
           };
         })
         .sort((a, b) => String(a.sedeNombre || '').localeCompare(String(b.sedeNombre || '')));
@@ -181,60 +269,71 @@ export const RegistroSede = (mount, deps = {}) => {
             dependenciaKey: r.dependenciaKey,
             dependenciaCodigo: r.dependenciaCodigo,
             dependenciaNombre: r.dependenciaNombre || 'Sin dependencia',
+            nroSedes: 0,
             planeados: 0,
             contratados: 0,
-            noContratado: 0,
-            novSinReemplazo: 0,
-            ausentismoTotal: 0,
-            totalPagar: 0
+            registrados: 0,
+            faltantes: 0,
+            sobrantes: 0
           });
         }
         const t = depMap.get(r.dependenciaKey);
+        t.nroSedes += 1;
         t.planeados += r.planeados;
         t.contratados += r.contratados;
-        t.noContratado += r.noContratado;
-        t.novSinReemplazo += r.novSinReemplazo;
-        t.ausentismoTotal += r.ausentismoTotal;
-        t.totalPagar += r.totalPagar;
+        t.registrados += r.registrados;
+        t.faltantes += r.faltantes;
+        t.sobrantes += r.sobrantes;
       });
       dependencyRows = Array.from(depMap.values()).sort((a, b) => String(a.dependenciaNombre || '').localeCompare(String(b.dependenciaNombre || '')));
 
       renderDependency(date);
       renderTotals(date);
-      msg.textContent = `Consulta OK (${date}). Dependencias: ${dependencyRows.length}`;
+      msg.textContent = 'Consulta OK';
     } catch (e) {
       msg.textContent = 'Error: ' + (e?.message || e);
     }
   }
 
   function renderDependency(date) {
+    const term = normalizeText(qs('#depSearch', ui)?.value || '');
+    const mode = String(qs('#depFilter', ui)?.value || 'all').trim();
+    const filteredRows = dependencyRows.filter((r) => {
+      const matchesTerm = !term || normalizeText(r.dependenciaNombre || '').includes(term);
+      if (!matchesTerm) return false;
+      if (mode === 'faltantes') return Number(r.faltantes || 0) > 0;
+      if (mode === 'sobrantes') return Number(r.sobrantes || 0) > 0;
+      return true;
+    });
+    const sortedRows = sortRows(filteredRows, depSortKey, depSortDir);
     const tb = qs('#tblDependency tbody', ui);
-    tb.replaceChildren(...dependencyRows.map((r) => {
+    tb.replaceChildren(...sortedRows.map((r) => {
       const tr = el('tr', {}, []);
       const btn = el('button', { className: 'btn', type: 'button' }, ['Ver']);
       btn.addEventListener('click', () => renderDependencyDetail(r.dependenciaKey, r.dependenciaNombre, date));
       tr.append(
         el('td', {}, [r.dependenciaNombre || '-']),
+        el('td', {}, [String(r.nroSedes || 0)]),
         el('td', {}, [String(r.planeados)]),
         el('td', {}, [String(r.contratados)]),
-        el('td', {}, [String(r.noContratado)]),
-        el('td', {}, [String(r.novSinReemplazo)]),
-        el('td', {}, [String(r.ausentismoTotal)]),
-        el('td', {}, [String(r.totalPagar)]),
+        el('td', {}, [String(r.registrados)]),
+        el('td', {}, [String(r.faltantes)]),
+        el('td', {}, [String(r.sobrantes)]),
         el('td', {}, [btn])
       );
       return tr;
     }));
 
-    const totals = dependencyRows.reduce((acc, r) => ({
+    const totals = filteredRows.reduce((acc, r) => ({
+      nroSedes: acc.nroSedes + Number(r.nroSedes || 0),
       planeados: acc.planeados + Number(r.planeados || 0),
       contratados: acc.contratados + Number(r.contratados || 0),
-      noContratado: acc.noContratado + Number(r.noContratado || 0),
-      novSinReemplazo: acc.novSinReemplazo + Number(r.novSinReemplazo || 0),
-      ausentismoTotal: acc.ausentismoTotal + Number(r.ausentismoTotal || 0),
-      totalPagar: acc.totalPagar + Number(r.totalPagar || 0)
-    }), { planeados: 0, contratados: 0, noContratado: 0, novSinReemplazo: 0, ausentismoTotal: 0, totalPagar: 0 });
-    qs('#totDependency', ui).textContent = `Total dependencias - Planeados: ${totals.planeados}, Contratados: ${totals.contratados}, No contratado: ${totals.noContratado}, Novedad sin reemplazo: ${totals.novSinReemplazo}, Total ausentismo: ${totals.ausentismoTotal}, Total a pagar: ${totals.totalPagar}`;
+      registrados: acc.registrados + Number(r.registrados || 0),
+      faltantes: acc.faltantes + Number(r.faltantes || 0),
+      sobrantes: acc.sobrantes + Number(r.sobrantes || 0)
+    }), { nroSedes: 0, planeados: 0, contratados: 0, registrados: 0, faltantes: 0, sobrantes: 0 });
+    qs('#totDependency', ui).textContent = `Total dependencias - Sedes: ${totals.nroSedes}, Planeados: ${totals.planeados}, Contratados: ${totals.contratados}, Registrados: ${totals.registrados}, Faltantes: ${totals.faltantes}, Sobrantes: ${totals.sobrantes}`;
+    updateSortIndicators('#tblDependency th[data-sort-dep]', 'data-sort-dep', depSortKey, depSortDir);
   }
 
   function renderTotals(date) {
@@ -246,23 +345,32 @@ export const RegistroSede = (mount, deps = {}) => {
           sedeNombre: r.sedeNombre || '-',
           planeados: 0,
           contratados: 0,
-          noContratado: 0,
-          novSinReemplazo: 0,
-          ausentismoTotal: 0,
-          totalPagar: 0
+          registrados: 0,
+          faltantes: 0,
+          sobrantes: 0
         });
       }
       const t = bySede.get(r.sedeCodigo);
       t.planeados += r.planeados;
       t.contratados += r.contratados;
-      t.noContratado += r.noContratado;
-      t.novSinReemplazo += r.novSinReemplazo;
-      t.ausentismoTotal += r.ausentismoTotal;
-      t.totalPagar += r.totalPagar;
+      t.registrados += r.registrados;
+      t.faltantes += r.faltantes;
+      t.sobrantes += r.sobrantes;
     });
-    const rows = Array.from(bySede.values()).sort((a, b) => String(a.sedeNombre || '').localeCompare(String(b.sedeNombre || '')));
+    totalsRows = Array.from(bySede.values()).sort((a, b) => String(a.sedeNombre || '').localeCompare(String(b.sedeNombre || '')));
+    const term = normalizeText(qs('#sedeSearch', ui)?.value || '');
+    const mode = String(qs('#sedeFilter', ui)?.value || 'all').trim();
+    const rows = totalsRows.filter((r) => {
+      const blob = `${r.sedeNombre || ''} ${r.sedeCodigo || ''}`;
+      const matchesTerm = !term || normalizeText(blob).includes(term);
+      if (!matchesTerm) return false;
+      if (mode === 'faltantes') return Number(r.faltantes || 0) > 0;
+      if (mode === 'sobrantes') return Number(r.sobrantes || 0) > 0;
+      return true;
+    });
+    const sortedRows = sortRows(rows, sedeSortKey, sedeSortDir);
     const tb = qs('#tblTotals tbody', ui);
-    tb.replaceChildren(...rows.map((r) => {
+    tb.replaceChildren(...sortedRows.map((r) => {
       const tr = el('tr', {}, []);
       const btn = el('button', { className: 'btn', type: 'button' }, ['Ver']);
       btn.addEventListener('click', () => renderSedeDetail(r.sedeCodigo, r.sedeNombre, date));
@@ -270,16 +378,22 @@ export const RegistroSede = (mount, deps = {}) => {
         el('td', {}, [r.sedeNombre || '-']),
         el('td', {}, [String(r.planeados)]),
         el('td', {}, [String(r.contratados)]),
-        el('td', {}, [String(r.noContratado)]),
-        el('td', {}, [String(r.novSinReemplazo)]),
-        el('td', {}, [String(r.ausentismoTotal)]),
-        el('td', {}, [String(r.totalPagar)]),
+        el('td', {}, [String(r.registrados)]),
+        el('td', {}, [String(r.faltantes)]),
+        el('td', {}, [String(r.sobrantes)]),
         el('td', {}, [btn])
       );
       return tr;
     }));
-    const totalRange = rows.reduce((acc, r) => acc + Number(r.totalPagar || 0), 0);
-    qs('#totRange', ui).textContent = `Total del dia a pagar: ${totalRange}`;
+    const totals = rows.reduce((acc, r) => ({
+      planeados: acc.planeados + Number(r.planeados || 0),
+      contratados: acc.contratados + Number(r.contratados || 0),
+      registrados: acc.registrados + Number(r.registrados || 0),
+      faltantes: acc.faltantes + Number(r.faltantes || 0),
+      sobrantes: acc.sobrantes + Number(r.sobrantes || 0)
+    }), { planeados: 0, contratados: 0, registrados: 0, faltantes: 0, sobrantes: 0 });
+    qs('#totRange', ui).textContent = `Total sedes - Planeados: ${totals.planeados}, Contratados: ${totals.contratados}, Registrados: ${totals.registrados}, Faltantes: ${totals.faltantes}, Sobrantes: ${totals.sobrantes}`;
+    updateSortIndicators('#tblTotals th[data-sort-sede]', 'data-sort-sede', sedeSortKey, sedeSortDir);
   }
 
   function renderDependencyDetail(dependenciaKey, dependenciaNombre, date) {
@@ -287,7 +401,8 @@ export const RegistroSede = (mount, deps = {}) => {
     const rows = buildDetailRows(
       sedeDailyRows.filter((r) => r.dependenciaKey === dependenciaKey)
     );
-    renderDetailRows(rows);
+    detailRowsCache = rows;
+    renderDetailRows();
   }
 
   function renderSedeDetail(sedeCodigo, sedeNombre, date) {
@@ -295,7 +410,8 @@ export const RegistroSede = (mount, deps = {}) => {
     const rows = buildDetailRows(
       sedeDailyRows.filter((r) => r.sedeCodigo === sedeCodigo)
     );
-    renderDetailRows(rows);
+    detailRowsCache = rows;
+    renderDetailRows();
   }
 
   function buildDetailRows(rows = []) {
@@ -303,6 +419,12 @@ export const RegistroSede = (mount, deps = {}) => {
     rows.forEach((d) => {
       const key = `${d.fecha}|${d.sedeCodigo}`;
       const atts = attendanceByKey.get(key) || [];
+      const contracted = contractedEmployeesBySede.get(d.sedeCodigo) || [];
+      const registeredDocs = new Set(
+        atts
+          .map((a) => String(a.documento || '').trim())
+          .filter(Boolean)
+      );
       atts.forEach((a) => {
         const rep = replByEmpDate.get(`${a.fecha || ''}|${a.empleadoId || ''}`);
         let estado = 'Trabajo';
@@ -323,20 +445,34 @@ export const RegistroSede = (mount, deps = {}) => {
           estado
         });
       });
-      for (let i = 0; i < Number(d.noContratado || 0); i += 1) {
+
+      contracted.forEach((c) => {
+        if (registeredDocs.has(String(c.documento || '').trim())) return;
+        detailRows.push({
+          fecha: d.fecha,
+          sede: d.sedeNombre,
+          documento: c.documento || '-',
+          nombre: c.nombre || '-',
+          estado: 'Sin registro'
+        });
+      });
+
+      const noContratados = Math.max(0, Number(d.planeados || 0) - Number(d.contratados || 0));
+      for (let i = 0; i < noContratados; i += 1) {
         detailRows.push({
           fecha: d.fecha,
           sede: d.sedeNombre,
           documento: '-',
           nombre: `No contratado ${i + 1}`,
-          estado: 'No contratado'
+          estado: 'Sin registro'
         });
       }
     });
     return detailRows;
   }
 
-  function renderDetailRows(rows = []) {
+  function renderDetailRows() {
+    const rows = sortRows(detailRowsCache, detailSortKey, detailSortDir);
     const tb = qs('#tblDetail tbody', ui);
     tb.replaceChildren(...rows.map((r) => el('tr', {}, [
       el('td', {}, [r.fecha || '-']),
@@ -345,6 +481,7 @@ export const RegistroSede = (mount, deps = {}) => {
       el('td', {}, [r.nombre || '-']),
       el('td', {}, [r.estado || '-'])
     ])));
+    updateSortIndicators('#tblDetail th[data-sort-detail]', 'data-sort-detail', detailSortKey, detailSortDir);
   }
 
   async function loadSedesSnapshot() {
@@ -372,6 +509,11 @@ export const RegistroSede = (mount, deps = {}) => {
   run();
   return () => {};
 };
+
+function currentDate() {
+  const elDate = document.getElementById('opDate');
+  return String(elDate?.value || todayBogota()).trim();
+}
 
 function snapshotOnce(streamFn) {
   return new Promise((resolve) => {

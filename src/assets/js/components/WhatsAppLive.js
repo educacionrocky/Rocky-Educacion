@@ -1,4 +1,5 @@
 import { el, qs } from '../utils/dom.js';
+import { showInfoModal } from '../utils/infoModal.js';
 
 export const WhatsAppLive = (mount, deps = {}) => {
   const today = todayBogota();
@@ -11,9 +12,17 @@ export const WhatsAppLive = (mount, deps = {}) => {
             el('label', { className: 'label' }, ['Fecha']),
             el('input', { className: 'input wa-input', type: 'date', value: today, disabled: true })
           ]),
-          el('div', { className: 'wa-field wa-field--search' }, [
-            el('label', { className: 'label' }, ['Buscar']),
-            el('input', { id: 'waSearch', className: 'input wa-input', placeholder: 'Cedula, nombre o novedad...' })
+          el('div', { style: 'display:grid;grid-template-columns:minmax(0,1fr) minmax(220px,.8fr);gap:.6rem;align-items:end;min-width:0;' }, [
+            el('div', { className: 'wa-field wa-field--search' }, [
+              el('label', { className: 'label' }, ['Buscar']),
+              el('input', { id: 'waSearch', className: 'input wa-input', placeholder: 'Cedula, nombre, novedad o reemplazo...' })
+            ]),
+            el('div', { className: 'wa-field' }, [
+              el('label', { className: 'label' }, ['Filtro']),
+              el('select', { id: 'waNoveltyFilter', className: 'input wa-input' }, [
+                el('option', { value: 'all' }, ['Todas'])
+              ])
+            ])
           ])
         ])
       ]),
@@ -43,21 +52,27 @@ export const WhatsAppLive = (mount, deps = {}) => {
             el('col', { style: 'width:200px' }),
             el('col', { style: 'width:220px' }),
             el('col', { style: 'width:64px' }),
-            el('col', { style: 'width:220px' })
+            el('col', { style: 'width:220px' }),
+            el('col', { style: 'width:70px' })
           ]),
           el('thead', {}, [
             el('tr', {}, [
-              el('th', {}, ['Fecha']),
-              el('th', {}, ['Hora']),
-              el('th', {}, ['Cedula']),
-              el('th', {}, ['Nombre']),
-              el('th', {}, ['Novedad']),
-              el('th', {}, ['Dias']),
-              el('th', {}, ['Reemplazo'])
+              el('th', { 'data-sort': 'fecha', style: 'cursor:pointer' }, ['Fecha']),
+              el('th', { 'data-sort': 'hora', style: 'cursor:pointer' }, ['Hora']),
+              el('th', { 'data-sort': 'documento', style: 'cursor:pointer' }, ['Cedula']),
+              el('th', { 'data-sort': 'nombre', style: 'cursor:pointer' }, ['Nombre']),
+              el('th', { 'data-sort': 'novedad', style: 'cursor:pointer' }, ['Novedad']),
+              el('th', { 'data-sort': 'dias', style: 'cursor:pointer' }, ['Dias']),
+              el('th', { 'data-sort': 'reemplazo', style: 'cursor:pointer' }, ['Reemplazo'])
+              ,
+              el('th', {}, ['Info'])
             ])
           ]),
         el('tbody', {})
       ])
+    ]),
+    el('div', { className: 'mt-2', style: 'display:flex;justify-content:flex-end;' }, [
+      el('button', { id: 'btnManualClose', className: 'btn btn--primary', type: 'button' }, ['Cerrar dia'])
     ]),
     el('p', { id: 'waMsg', className: 'text-muted mt-2' }, ['Conectando...'])
   ]);
@@ -65,6 +80,8 @@ export const WhatsAppLive = (mount, deps = {}) => {
   const tbody = qs('tbody', ui);
   const msg = qs('#waMsg', ui);
   const searchInput = qs('#waSearch', ui);
+  const noveltyFilter = qs('#waNoveltyFilter', ui);
+  const btnManualClose = qs('#btnManualClose', ui);
 
   let attendance = [];
   let replacements = [];
@@ -79,6 +96,8 @@ export const WhatsAppLive = (mount, deps = {}) => {
   let unNovedades = null;
   let unEmployees = null;
   let unSedes = null;
+  let sortKey = 'hora';
+  let sortDir = -1;
 
   function replacementMap() {
     const map = new Map();
@@ -241,10 +260,19 @@ export const WhatsAppLive = (mount, deps = {}) => {
 
   function applyFilters(rows) {
     const term = String(searchInput.value || '').trim().toLowerCase();
+    const selectedType = String(noveltyFilter?.value || 'all').trim();
+    const replMap = replacementMap();
     let out = rows.filter((r) => String(r.fecha || '').trim() === today);
+
+    out = out.filter((r) => {
+      if (selectedType === 'all') return true;
+      const rowType = noveltyTypeKey(r);
+      return rowType === selectedType;
+    });
 
     if (!term) return out;
     return out.filter((r) => {
+      const repl = replMap.get(`${r.fecha || ''}_${r.empleadoId || ''}`) || {};
       const blob = [
         r.documento || '',
         r.nombre || '',
@@ -253,10 +281,75 @@ export const WhatsAppLive = (mount, deps = {}) => {
         r.incapacidadDias || '',
         r.novedad || '',
         r.sedeNombre || '',
-        r.sedeCodigo || ''
+        r.sedeCodigo || '',
+        repl.supernumerarioNombre || '',
+        repl.supernumerarioDocumento || '',
+        repl.decision || ''
       ].join(' ').toLowerCase();
       return blob.includes(term);
     });
+  }
+
+  function employeeInfoSnapshot(row) {
+    const empleadoId = String(row?.empleadoId || '').trim();
+    const documento = String(row?.documento || '').trim();
+    const emp = (employees || []).find((e) => {
+      if (empleadoId && String(e?.id || '').trim() === empleadoId) return true;
+      if (documento && String(e?.documento || '').trim() === documento) return true;
+      return false;
+    }) || null;
+    const sedeCodigo = String(row?.sedeCodigo || emp?.sedeCodigo || '').trim();
+    const sedeNombre = String(row?.sedeNombre || emp?.sedeNombre || sedeCodigo || '-').trim() || '-';
+    const sede = (sedes || []).find((s) => String(s?.codigo || '').trim() === sedeCodigo) || null;
+    return {
+      documento: documento || String(emp?.documento || '-').trim() || '-',
+      nombre: String(row?.nombre || emp?.nombre || '-').trim() || '-',
+      telefono: String(row?.telefono || emp?.telefono || '-').trim() || '-',
+      sede: sedeNombre,
+      dependencia: String(sede?.dependenciaNombre || '-').trim() || '-',
+      zona: String(sede?.zonaNombre || '-').trim() || '-'
+    };
+  }
+
+  function infoButtonForRow(row) {
+    const btn = el('button', { className: 'btn', type: 'button', title: 'Ver informacion del empleado', 'aria-label': 'Ver informacion del empleado' }, ['ⓘ']);
+    btn.addEventListener('click', () => {
+      const info = employeeInfoSnapshot(row);
+      showInfoModal('Informacion del empleado', [
+        `Cedula: ${info.documento}`,
+        `Nombre: ${info.nombre}`,
+        `Telefono: ${info.telefono}`,
+        `Sede: ${info.sede}`,
+        `Dependencia: ${info.dependencia}`,
+        `Zona: ${info.zona}`
+      ]);
+    });
+    return btn;
+  }
+
+  function noveltyTypeLabel(row) {
+    const raw = String(displayNovedad(row) || row.novedadNombre || row.novedad || '').trim();
+    const code = String(row.novedadCodigo || '').trim();
+    if (!raw || raw === '1' || code === '1') return 'TRABAJANDO';
+    const base = baseNovedadName(raw).toUpperCase();
+    return base || 'OTRA NOVEDAD';
+  }
+
+  function noveltyTypeKey(row) {
+    return normalize(noveltyTypeLabel(row)).replace(/\s+/g, '_');
+  }
+
+  function refreshNoveltyFilterOptions() {
+    if (!noveltyFilter) return;
+    const dayRows = (attendance || []).filter((r) => String(r.fecha || '').trim() === today);
+    const labels = Array.from(new Set(dayRows.map((r) => noveltyTypeLabel(r)).filter(Boolean))).sort((a, b) => a.localeCompare(b));
+    const current = String(noveltyFilter.value || 'all').trim();
+    const options = [
+      el('option', { value: 'all' }, ['Todas']),
+      ...labels.map((label) => el('option', { value: normalize(label).replace(/\s+/g, '_') }, [label]))
+    ];
+    noveltyFilter.replaceChildren(...options);
+    if ([...noveltyFilter.options].some((o) => o.value === current)) noveltyFilter.value = current;
   }
 
   async function saveReplacement(row, selectedDoc, btn, selectEl = null) {
@@ -315,13 +408,14 @@ export const WhatsAppLive = (mount, deps = {}) => {
 
   function render() {
     const replMap = replacementMap();
-    const sorted = [...attendance].sort((a, b) => {
-      const ah = String(a.hora || '');
-      const bh = String(b.hora || '');
-      if (ah === bh) return String(b.createdAt?.seconds || 0) - String(a.createdAt?.seconds || 0);
-      return bh.localeCompare(ah);
+    refreshNoveltyFilterOptions();
+    const baseRows = applyFilters([...attendance]);
+    const rows = [...baseRows].sort((a, b) => {
+      const va = sortValueForRow(a, sortKey, replMap);
+      const vb = sortValueForRow(b, sortKey, replMap);
+      if (va === vb) return 0;
+      return va > vb ? sortDir : -sortDir;
     });
-    const rows = applyFilters(sorted);
     const stats = calculateStats();
 
     tbody.replaceChildren(
@@ -345,7 +439,8 @@ export const WhatsAppLive = (mount, deps = {}) => {
             el('td', {}, [r.nombre || '-']),
             el('td', {}, [el('span', { style: novedadStyle }, [novedadText])]),
             el('td', {}, [r.incapacidadDias != null ? String(r.incapacidadDias) : '-']),
-            el('td', {}, [el('span', { style: 'color:#1d4ed8;' }, [`REEMPLAZO EN SEDE: ${sedeTxt}`])])
+            el('td', {}, [el('span', { style: 'color:#1d4ed8;' }, [`REEMPLAZO EN SEDE: ${sedeTxt}`])]),
+            el('td', {}, [infoButtonForRow(r)])
           ]);
         }
 
@@ -357,7 +452,8 @@ export const WhatsAppLive = (mount, deps = {}) => {
             el('td', {}, [r.nombre || '-']),
             el('td', {}, [el('span', { style: novedadStyle }, [novedadText])]),
             el('td', {}, [r.incapacidadDias != null ? String(r.incapacidadDias) : '-']),
-            el('td', {}, [el('span', { className: 'text-muted' }, ['No aplica'])])
+            el('td', {}, [el('span', { className: 'text-muted' }, ['No aplica'])]),
+            el('td', {}, [infoButtonForRow(r)])
           ]);
         }
 
@@ -369,7 +465,8 @@ export const WhatsAppLive = (mount, deps = {}) => {
             el('td', {}, [r.nombre || '-']),
             el('td', {}, [el('span', { style: novedadStyle }, [novedadText])]),
             el('td', {}, [r.incapacidadDias != null ? String(r.incapacidadDias) : '-']),
-            el('td', {}, [el('span', { style: 'color:#b91c1c;' }, ['Ausentismo confirmado'])])
+            el('td', {}, [el('span', { style: 'color:#b91c1c;' }, ['Ausentismo confirmado'])]),
+            el('td', {}, [infoButtonForRow(r)])
           ]);
         }
 
@@ -384,7 +481,8 @@ export const WhatsAppLive = (mount, deps = {}) => {
             el('td', {}, [r.nombre || '-']),
             el('td', {}, [el('span', { style: novedadStyle }, [novedadText])]),
             el('td', {}, [r.incapacidadDias != null ? String(r.incapacidadDias) : '-']),
-            el('td', {}, [el('span', { style: 'color:#15803d;' }, [repTxt])])
+            el('td', {}, [el('span', { style: 'color:#15803d;' }, [repTxt])]),
+            el('td', {}, [infoButtonForRow(r)])
           ]);
         }
 
@@ -444,7 +542,8 @@ export const WhatsAppLive = (mount, deps = {}) => {
           el('td', {}, [r.nombre || '-']),
           el('td', {}, [el('span', { style: novedadStyle }, [novedadText])]),
           el('td', {}, [r.incapacidadDias != null ? String(r.incapacidadDias) : '-']),
-          el('td', {}, [replacementCell])
+          el('td', {}, [replacementCell]),
+          el('td', {}, [infoButtonForRow(r)])
         ]);
       })
     );
@@ -457,6 +556,30 @@ export const WhatsAppLive = (mount, deps = {}) => {
     qs('#waNoveltyHandled', ui).textContent = String(stats.noveltyHandled);
     qs('#waNoveltyPending', ui).textContent = String(stats.noveltyPending);
     msg.textContent = `Total registros: ${rows.length}`;
+    updateSortIndicators();
+  }
+
+  function sortValueForRow(row, key, replMap) {
+    if (key === 'fecha') return String(row.fecha || '');
+    if (key === 'hora') return String(row.hora || '');
+    if (key === 'documento') return String(row.documento || '');
+    if (key === 'nombre') return String(row.nombre || '').toLowerCase();
+    if (key === 'novedad') return String(displayNovedad(row) || row.novedadNombre || row.novedad || '').toLowerCase();
+    if (key === 'dias') return Number(row.incapacidadDias || 0);
+    if (key === 'reemplazo') {
+      const repl = replMap.get(`${row.fecha || ''}_${row.empleadoId || ''}`) || {};
+      return String(repl.supernumerarioNombre || repl.supernumerarioDocumento || repl.decision || '').toLowerCase();
+    }
+    return '';
+  }
+
+  function updateSortIndicators() {
+    ui.querySelectorAll('th[data-sort]').forEach((th) => {
+      const base = th.dataset.baseLabel || th.textContent.replace(/\s[\^v▲▼]$/, '');
+      th.dataset.baseLabel = base;
+      const key = th.getAttribute('data-sort');
+      th.textContent = sortKey === key ? `${base} ${sortDir === 1 ? '▲' : '▼'}` : base;
+    });
   }
 
   function calculateStats() {
@@ -529,6 +652,54 @@ export const WhatsAppLive = (mount, deps = {}) => {
   }
 
   searchInput.addEventListener('input', render);
+  noveltyFilter?.addEventListener('change', render);
+  ui.querySelectorAll('th[data-sort]').forEach((th) => {
+    th.addEventListener('click', () => {
+      const key = String(th.getAttribute('data-sort') || '').trim();
+      if (!key) return;
+      if (sortKey === key) sortDir *= -1;
+      else {
+        sortKey = key;
+        sortDir = key === 'hora' ? -1 : 1;
+      }
+      render();
+    });
+  });
+  btnManualClose?.addEventListener('click', async () => {
+    if (typeof deps.closeOperationDayManual !== 'function') {
+      msg.textContent = 'Cierre manual no disponible en este entorno.';
+      return;
+    }
+    const alreadyClosed = await deps.isOperationDayClosed?.(today);
+    if (alreadyClosed) {
+      msg.textContent = `La fecha ${today} ya esta cerrada.`;
+      return;
+    }
+    const ok = globalThis.confirm?.(
+      `Se cerrara el dia ${today}. Este cierre bloquea cambios posteriores para esa fecha. Deseas continuar?`
+    );
+    if (!ok) return;
+    btnManualClose.disabled = true;
+    const oldTxt = btnManualClose.textContent;
+    btnManualClose.textContent = 'Cerrando...';
+    msg.textContent = 'Ejecutando cierre diario manual...';
+    try {
+      const res = await deps.closeOperationDayManual(today);
+      const r = Array.isArray(res?.results) ? res.results[0] : null;
+      const status = String(r?.status || 'ok').trim();
+      if (status === 'closed' || status === 'already_closed') {
+        msg.textContent = `Consulta OK. Cierre diario ${status === 'closed' ? 'realizado' : 'ya existente'} para ${today}.`;
+      } else {
+        msg.textContent = `Cierre ejecutado con estado: ${status}.`;
+      }
+      render();
+    } catch (err) {
+      msg.textContent = `Error en cierre manual: ${err?.message || err}`;
+    } finally {
+      btnManualClose.disabled = false;
+      btnManualClose.textContent = oldTxt;
+    }
+  });
 
   if (deps.streamSupernumerarios) {
     unSupernumerarios = deps.streamSupernumerarios((rows) => {

@@ -169,10 +169,10 @@ export const SedesAdmin=(mount,deps={})=>{
   }
   function updateSortIndicators(){
     ui.querySelectorAll('th[data-sort]').forEach((th)=>{
-      const base=th.dataset.baseLabel||th.textContent.replace(/\s[\^v]$/,'');
+      const base=th.dataset.baseLabel||th.textContent.replace(/\s[\^v▲▼]$/,'');
       th.dataset.baseLabel=base;
       const key=th.getAttribute('data-sort');
-      th.textContent=(sortKey===key)?`${base} ${sortDir===1?'^':'v'}`:base;
+      th.textContent=(sortKey===key)?`${base} ${sortDir===1?'▲':'▼'}`:base;
     });
   }
   function initSorting(){
