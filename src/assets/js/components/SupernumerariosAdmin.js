@@ -26,7 +26,7 @@ export const SupernumerariosAdmin=(mount,deps={})=>{
       el('div',{className:'form-row'},[
         el('div',{},[ el('label',{className:'label'},['Buscar']), el('input',{id:'txtSearch',className:'input',placeholder:'Codigo, documento, nombre o sede...'}) ]),
         el('div',{},[ el('label',{className:'label'},['Estado']), el('select',{id:'selStatus',className:'select'},[ el('option',{value:''},['Todos']), el('option',{value:'activo'},['Activos']), el('option',{value:'inactivo'},['Inactivos']) ]) ]),
-        el('span',{className:'right text-muted'},['Doble clic en una fila para editar.'])
+        el('span',{className:'right text-muted'},['Consulta informativa. Edicion y cambios de estado solo en Empleados.'])
       ]),
       el('div',{className:'mt-2 table-wrap'},[
         el('table',{className:'table',id:'tbl'},[
@@ -60,7 +60,8 @@ export const SupernumerariosAdmin=(mount,deps={})=>{
     tabCreate.classList.toggle('hidden',!isCreate);
     tabList.classList.toggle('hidden',isCreate);
   }
-  tabCreateBtn.addEventListener('click',()=> setTab('create'));
+  tabCreateBtn.classList.add('hidden');
+  setTab('list');
   tabListBtn.addEventListener('click',()=> setTab('list'));
 
   let sedeList=[]; let cargoList=[];
@@ -114,6 +115,17 @@ export const SupernumerariosAdmin=(mount,deps={})=>{
     const d=String(doc||'').trim();
     if(!d) return false;
     return employees.some((e)=> e.estado!=='inactivo' && String(e.documento||'').trim()===d);
+  };
+  const linkedEmployeeByDoc=(doc)=>{
+    const d=String(doc||'').trim();
+    if(!d) return null;
+    return employees.find((e)=> String(e.documento||'').trim()===d) || null;
+  };
+  const shouldHideInComplementaryView=(row)=>{
+    const linked=linkedEmployeeByDoc(row?.documento);
+    if(!linked) return false;
+    if(String(linked.estado||'').trim().toLowerCase()==='inactivo') return true;
+    return row?.estado==='inactivo' && isLinkedByDoc(row?.documento);
   };
 
   qs('#btnCreate',ui).addEventListener('click',async()=>{
@@ -197,6 +209,7 @@ export const SupernumerariosAdmin=(mount,deps={})=>{
   function render(){
     const term=search(); const st=filterStatus();
     const data=snapshot.filter(e=>{
+      if(shouldHideInComplementaryView(e)) return false;
       const text=[e.codigo,e.documento,e.nombre,e.cargoNombre,cargoNameByCode(e.cargoCodigo),e.sedeNombre,sedeNameByCode(e.sedeCodigo)].join(' ').toLowerCase();
       return (!term || text.includes(term)) && (!st || e.estado===st);
     });
@@ -217,7 +230,6 @@ export const SupernumerariosAdmin=(mount,deps={})=>{
     const tdIngreso=el('td',{},[ formatDate(e.fechaIngreso) ]);
     const tdRetiro=el('td',{},[ formatDate(e.fechaRetiro) ]);
     const tdAcc=el('td',{},[ actionsCell(e) ]);
-    tr.addEventListener('dblclick',()=> startEdit(tr,e));
     tr.append(tdCodigo,tdDoc,tdNombre,tdTel,tdCargo,tdSede,tdEstado,tdIngreso,tdRetiro,tdAcc);
     return tr;
   }
@@ -244,50 +256,9 @@ export const SupernumerariosAdmin=(mount,deps={})=>{
   }
   function actionsCell(e){
     const box=el('div',{className:'row-actions'},[]);
-    const btnEdit=el('button',{className:'btn'},['Editar']);
-    btnEdit.addEventListener('click',()=>{ const tr=tbody.querySelector(`tr[data-id="${e.id}"]`); if(tr) startEdit(tr,e); });
-    const btnToggle=el('button',{className:'btn '+(e.estado==='activo'?'btn--danger':'' )},[ e.estado==='activo'?'Desactivar':'Activar' ]);
-    btnToggle.addEventListener('click',async()=>{
-      const target=e.estado==='activo'?'inactivo':'activo';
-      try{
-        let retiroDate=null;
-        let motivoEstado=null;
-        let syncEmployee=true;
-        const suggested=toInputDate(new Date()) || '';
-        const modal=await showActionModal({
-          title:`${target==='inactivo'?'Desactivar':'Activar'} supernumerario`,
-          message:`Supernumerario: ${e.nombre||'-'}`,
-          confirmText:target==='inactivo'?'Desactivar':'Activar',
-          fields:[
-            ...(target==='inactivo' ? [{ id:'retiroDate', label:'Fecha de retiro', type:'date', required:true, value:suggested }, { id:'motivo', label:'Motivo', type:'select', required:true, value:'T', options:[{ value:'T', label:'Traslado a Empleado' }, { value:'R', label:'Retiro' }] }] : []),
-            { id:'detail', label:'Detalle', type:'textarea', required:true, placeholder:'Escribe el motivo o detalle de esta accion' }
-          ]
-        });
-        if(!modal.confirmed) return;
-        if(target==='inactivo'){
-          const retiro=String(modal.values.retiroDate||'').trim();
-          if(!/^\d{4}-\d{2}-\d{2}$/.test(retiro)) return alert('Fecha invalida. Usa formato AAAA-MM-DD.');
-          retiroDate=new Date(`${retiro}T00:00:00`);
-          if(Number.isNaN(retiroDate.getTime())) return alert('Fecha invalida.');
-          const motivoNorm=String(modal.values.motivo||'').trim().toUpperCase();
-          if(motivoNorm!=='T' && motivoNorm!=='R') return alert('Motivo invalido. Usa T o R.');
-          motivoEstado = motivoNorm==='T' ? 'traslado_empleado' : 'retiro';
-          syncEmployee = motivoEstado!=='traslado_empleado';
-        }
-        await deps.setSupernumerarioStatus?.(e.id,target,retiroDate,{ syncEmployee, motivoEstado });
-        await deps.addAuditLog?.({
-          targetType:'supernumerario',
-          targetId:e.id,
-          action: target==='activo'?'activate_supernumerario':'deactivate_supernumerario',
-          before:{estado:e.estado, fechaRetiro:e.fechaRetiro||null, motivoEstado:e.motivoEstado||null},
-          after:{estado:target, fechaRetiro:retiroDate||null, motivoEstado:motivoEstado||null},
-          note: modal.values.detail||null
-        });
-      }catch(err){ alert('Error: '+(err?.message||err)); }
-    });
-    const btnInfo=el('button',{className:'btn',title:'Ver informacion del registro','aria-label':'Ver informacion del registro'},['ⓘ']);
+    const btnInfo=el('button',{className:'btn btn--icon',title:'Ver informacion','aria-label':'Ver informacion'},['\u24D8']);
     btnInfo.addEventListener('click',()=>{ const info=auditInfoData(e); showInfoModal('Informacion del registro',[`Evento: ${info.action}`,`Usuario: ${info.user}`,`Fecha: ${info.date}`]); });
-    box.append(btnEdit,btnToggle,btnInfo); return box;
+    box.append(btnInfo); return box;
   }
   function startEdit(tr,e){
     const cur={

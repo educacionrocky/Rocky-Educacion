@@ -56,12 +56,17 @@ export const RegistroSede = (mount, deps = {}) => {
             el('option', { value: 'faltantes' }, ['Con faltantes']),
             el('option', { value: 'sobrantes' }, ['Con sobrantes'])
           ])
+        ]),
+        el('div', {}, [
+          el('label', { className: 'label' }, ['Zona']),
+          el('select', { id: 'sedeZoneFilter', className: 'input' }, [el('option', { value: '' }, ['Todas'])])
         ])
       ]),
       el('div', { className: 'table-wrap mt-2' }, [
         el('table', { className: 'table', id: 'tblTotals' }, [
           el('thead', {}, [el('tr', {}, [
             el('th', { 'data-sort-sede': 'sedeNombre', style: 'cursor:pointer' }, ['Sede']),
+            el('th', { 'data-sort-sede': 'zonaNombre', style: 'cursor:pointer' }, ['Zona']),
             el('th', { 'data-sort-sede': 'planeados', style: 'cursor:pointer' }, ['Planeados']),
             el('th', { 'data-sort-sede': 'contratados', style: 'cursor:pointer' }, ['Contratados']),
             el('th', { 'data-sort-sede': 'registrados', style: 'cursor:pointer' }, ['Registrados']),
@@ -81,6 +86,7 @@ export const RegistroSede = (mount, deps = {}) => {
           el('thead', {}, [el('tr', {}, [
             el('th', { 'data-sort-detail': 'fecha', style: 'cursor:pointer' }, ['Fecha']),
             el('th', { 'data-sort-detail': 'sede', style: 'cursor:pointer' }, ['Sede']),
+            el('th', { 'data-sort-detail': 'zona', style: 'cursor:pointer' }, ['Zona']),
             el('th', { 'data-sort-detail': 'documento', style: 'cursor:pointer' }, ['Documento']),
             el('th', { 'data-sort-detail': 'nombre', style: 'cursor:pointer' }, ['Nombre']),
             el('th', { 'data-sort-detail': 'estado', style: 'cursor:pointer' }, ['Estado'])
@@ -112,6 +118,7 @@ export const RegistroSede = (mount, deps = {}) => {
   qs('#depFilter', ui).addEventListener('change', () => renderDependency(currentDate()));
   qs('#sedeSearch', ui).addEventListener('input', () => renderTotals(currentDate()));
   qs('#sedeFilter', ui).addEventListener('change', () => renderTotals(currentDate()));
+  qs('#sedeZoneFilter', ui).addEventListener('change', () => renderTotals(currentDate()));
   ui.querySelectorAll('#tblDependency th[data-sort-dep]').forEach((th) => {
     th.addEventListener('click', () => {
       const key = String(th.getAttribute('data-sort-dep') || '').trim();
@@ -184,7 +191,9 @@ export const RegistroSede = (mount, deps = {}) => {
       (sedes || []).forEach((s) => {
         sedeMetaByCode.set(String(s.codigo || ''), {
           dependenciaCodigo: String(s.dependenciaCodigo || '').trim(),
-          dependenciaNombre: String(s.dependenciaNombre || '').trim()
+          dependenciaNombre: String(s.dependenciaNombre || '').trim(),
+          zonaCodigo: String(s.zonaCodigo || '').trim(),
+          zonaNombre: String(s.zonaNombre || '').trim()
         });
       });
 
@@ -214,20 +223,23 @@ export const RegistroSede = (mount, deps = {}) => {
           .filter(Boolean)
       );
       const contratadosBySede = new Map();
-      contractedEmployeesBySede = new Map();
+      const contractedMapBySede = new Map();
       (employees || []).forEach((e) => {
         if (!isEmployeeExpectedForDate(e, date)) return;
         const doc = String(e.documento || '').trim();
         if (doc && superDocs.has(doc)) return;
         const sedeCode = String(e.sedeCodigo || '').trim();
         if (!sedeCode) return;
-        contratadosBySede.set(sedeCode, Number(contratadosBySede.get(sedeCode) || 0) + 1);
-        if (!contractedEmployeesBySede.has(sedeCode)) contractedEmployeesBySede.set(sedeCode, []);
-        contractedEmployeesBySede.get(sedeCode).push({
+        if (!contractedMapBySede.has(sedeCode)) contractedMapBySede.set(sedeCode, new Map());
+        const uniqueKey = doc || `EMP:${String(e.id || e.codigo || e.nombre || '').trim()}`;
+        if (contractedMapBySede.get(sedeCode).has(uniqueKey)) return;
+        contractedMapBySede.get(sedeCode).set(uniqueKey, {
           documento: doc || '-',
           nombre: String(e.nombre || '-').trim() || '-'
         });
+        contratadosBySede.set(sedeCode, Number(contratadosBySede.get(sedeCode) || 0) + 1);
       });
+      contractedEmployeesBySede = new Map(Array.from(contractedMapBySede.entries()).map(([k, m]) => [k, Array.from(m.values())]));
 
       sedeDailyRows = (sedes || [])
         .filter((s) => String(s.estado || 'activo').trim().toLowerCase() !== 'inactivo')
@@ -245,11 +257,15 @@ export const RegistroSede = (mount, deps = {}) => {
           const meta = sedeMetaByCode.get(sedeCode) || {};
           const dependenciaCodigo = String(meta.dependenciaCodigo || '').trim();
           const dependenciaNombre = String(meta.dependenciaNombre || '').trim() || 'Sin dependencia';
+          const zonaCodigo = String(meta.zonaCodigo || '').trim();
+          const zonaNombre = String(meta.zonaNombre || '').trim() || 'Sin zona';
           const dependenciaKey = dependenciaCodigo || `NO_DEP:${dependenciaNombre}`;
           return {
             fecha: date,
             sedeCodigo: sedeCode,
             sedeNombre: String(s.nombre || sedeCode || '-'),
+            zonaCodigo,
+            zonaNombre,
             dependenciaCodigo,
             dependenciaNombre,
             dependenciaKey,
@@ -286,6 +302,7 @@ export const RegistroSede = (mount, deps = {}) => {
         t.sobrantes += r.sobrantes;
       });
       dependencyRows = Array.from(depMap.values()).sort((a, b) => String(a.dependenciaNombre || '').localeCompare(String(b.dependenciaNombre || '')));
+      refreshZoneFilterOptions();
 
       renderDependency(date);
       renderTotals(date);
@@ -343,6 +360,8 @@ export const RegistroSede = (mount, deps = {}) => {
         bySede.set(r.sedeCodigo, {
           sedeCodigo: r.sedeCodigo,
           sedeNombre: r.sedeNombre || '-',
+          zonaCodigo: r.zonaCodigo || '',
+          zonaNombre: r.zonaNombre || 'Sin zona',
           planeados: 0,
           contratados: 0,
           registrados: 0,
@@ -360,10 +379,12 @@ export const RegistroSede = (mount, deps = {}) => {
     totalsRows = Array.from(bySede.values()).sort((a, b) => String(a.sedeNombre || '').localeCompare(String(b.sedeNombre || '')));
     const term = normalizeText(qs('#sedeSearch', ui)?.value || '');
     const mode = String(qs('#sedeFilter', ui)?.value || 'all').trim();
+    const zoneFilter = String(qs('#sedeZoneFilter', ui)?.value || '').trim();
     const rows = totalsRows.filter((r) => {
       const blob = `${r.sedeNombre || ''} ${r.sedeCodigo || ''}`;
       const matchesTerm = !term || normalizeText(blob).includes(term);
       if (!matchesTerm) return false;
+      if (zoneFilter && String(r.zonaCodigo || '').trim() !== zoneFilter) return false;
       if (mode === 'faltantes') return Number(r.faltantes || 0) > 0;
       if (mode === 'sobrantes') return Number(r.sobrantes || 0) > 0;
       return true;
@@ -376,6 +397,7 @@ export const RegistroSede = (mount, deps = {}) => {
       btn.addEventListener('click', () => renderSedeDetail(r.sedeCodigo, r.sedeNombre, date));
       tr.append(
         el('td', {}, [r.sedeNombre || '-']),
+        el('td', {}, [r.zonaNombre || 'Sin zona']),
         el('td', {}, [String(r.planeados)]),
         el('td', {}, [String(r.contratados)]),
         el('td', {}, [String(r.registrados)]),
@@ -440,6 +462,7 @@ export const RegistroSede = (mount, deps = {}) => {
         detailRows.push({
           fecha: d.fecha,
           sede: d.sedeNombre,
+          zona: d.zonaNombre || 'Sin zona',
           documento: a.documento || '-',
           nombre: a.nombre || '-',
           estado
@@ -451,6 +474,7 @@ export const RegistroSede = (mount, deps = {}) => {
         detailRows.push({
           fecha: d.fecha,
           sede: d.sedeNombre,
+          zona: d.zonaNombre || 'Sin zona',
           documento: c.documento || '-',
           nombre: c.nombre || '-',
           estado: 'Sin registro'
@@ -462,6 +486,7 @@ export const RegistroSede = (mount, deps = {}) => {
         detailRows.push({
           fecha: d.fecha,
           sede: d.sedeNombre,
+          zona: d.zonaNombre || 'Sin zona',
           documento: '-',
           nombre: `No contratado ${i + 1}`,
           estado: 'Sin registro'
@@ -477,6 +502,7 @@ export const RegistroSede = (mount, deps = {}) => {
     tb.replaceChildren(...rows.map((r) => el('tr', {}, [
       el('td', {}, [r.fecha || '-']),
       el('td', {}, [r.sede || '-']),
+      el('td', {}, [r.zona || 'Sin zona']),
       el('td', {}, [r.documento || '-']),
       el('td', {}, [r.nombre || '-']),
       el('td', {}, [r.estado || '-'])
@@ -502,6 +528,23 @@ export const RegistroSede = (mount, deps = {}) => {
   async function loadSupernumerariosSnapshot() {
     if (typeof deps.streamSupernumerarios !== 'function') return [];
     return snapshotOnce(deps.streamSupernumerarios);
+  }
+
+  function refreshZoneFilterOptions() {
+    const sel = qs('#sedeZoneFilter', ui);
+    if (!sel) return;
+    const previous = String(sel.value || '').trim();
+    const zones = Array.from(
+      new Map(
+        sedeDailyRows.map((r) => [String(r.zonaCodigo || '').trim(), String(r.zonaNombre || 'Sin zona').trim() || 'Sin zona'])
+      ).entries()
+    )
+      .filter(([code]) => code)
+      .sort((a, b) => String(a[1] || '').localeCompare(String(b[1] || '')));
+    sel.replaceChildren(
+      el('option', { value: '' }, ['Todas']),
+      ...zones.map(([code, name]) => el('option', { value: code, selected: code === previous }, [`${name} (${code})`]))
+    );
   }
 
   mount.replaceChildren(ui);

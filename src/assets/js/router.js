@@ -1,5 +1,6 @@
 const routes = new Map();
 let renderCurrentRoute = () => {};
+let currentCleanup = null;
 
 export const addRoute = (path, renderFn) => routes.set(path, renderFn);
 export const navigate = (path) => {
@@ -14,8 +15,14 @@ export const refreshRoute = () => {
 
 export const startRouter = () => {
   const render = () => {
+    if (typeof currentCleanup === 'function') {
+      try { currentCleanup(); } catch {}
+      currentCleanup = null;
+    }
     const path = getPath();
-    (routes.get(path) || routes.get('/login'))?.();
+    const view = routes.get(path) || routes.get('/login');
+    const maybeCleanup = view?.();
+    if (typeof maybeCleanup === 'function') currentCleanup = maybeCleanup;
   };
   renderCurrentRoute = render;
   window.addEventListener('hashchange', render);

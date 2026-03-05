@@ -23,7 +23,7 @@ export const SupervisorsAdmin=(mount,deps={})=>{
       el('div',{className:'form-row'},[
         el('div',{},[ el('label',{className:'label'},['Buscar']), el('input',{id:'txtSearch',className:'input',placeholder:'Codigo, documento, nombre o zona...'}) ]),
         el('div',{},[ el('label',{className:'label'},['Estado']), el('select',{id:'selStatus',className:'select'},[ el('option',{value:''},['Todos']), el('option',{value:'activo'},['Activos']), el('option',{value:'inactivo'},['Inactivos']) ]) ]),
-        el('span',{className:'right text-muted'},['Doble clic en una fila para editar.'])
+        el('span',{className:'right text-muted'},['Edicion habilitada solo para la columna Zona.'])
       ]),
       el('div',{className:'mt-2 table-wrap'},[
         el('table',{className:'table',id:'tbl'},[
@@ -55,7 +55,8 @@ export const SupervisorsAdmin=(mount,deps={})=>{
     tabCreate.classList.toggle('hidden',!isCreate);
     tabList.classList.toggle('hidden',isCreate);
   }
-  tabCreateBtn.addEventListener('click',()=> setTab('create'));
+  tabCreateBtn.classList.add('hidden');
+  setTab('list');
   tabListBtn.addEventListener('click',()=> setTab('list'));
 
   let zoneList=[];
@@ -82,6 +83,17 @@ export const SupervisorsAdmin=(mount,deps={})=>{
     const d=String(doc||'').trim();
     if(!d) return false;
     return employees.some((e)=> e.estado!=='inactivo' && String(e.documento||'').trim()===d);
+  };
+  const linkedEmployeeByDoc=(doc)=>{
+    const d=String(doc||'').trim();
+    if(!d) return null;
+    return employees.find((e)=> String(e.documento||'').trim()===d) || null;
+  };
+  const shouldHideInComplementaryView=(row)=>{
+    const linked=linkedEmployeeByDoc(row?.documento);
+    if(!linked) return false;
+    if(String(linked.estado||'').trim().toLowerCase()==='inactivo') return true;
+    return row?.estado==='inactivo' && isLinkedByDoc(row?.documento);
   };
 
   qs('#btnCreate',ui).addEventListener('click',async()=>{
@@ -123,6 +135,7 @@ export const SupervisorsAdmin=(mount,deps={})=>{
   function render(){
     const term=search(); const st=filterStatus();
     const data=snapshot.filter(s=>{
+      if(shouldHideInComplementaryView(s)) return false;
       const text=[s.codigo,s.documento,s.nombre,s.zonaNombre,zoneNameByCode(s.zonaCodigo)].join(' ').toLowerCase();
       return (!term || text.includes(term)) && (!st || s.estado===st);
     });
@@ -141,7 +154,6 @@ export const SupervisorsAdmin=(mount,deps={})=>{
     const tdIngreso=el('td',{},[ formatDate(s.fechaIngreso) ]);
     const tdRetiro=el('td',{},[ formatDate(s.fechaRetiro) ]);
     const tdAcc=el('td',{},[ actionsCell(s) ]);
-    tr.addEventListener('dblclick',()=> startEdit(tr,s));
     tr.append(tdCodigo,tdDoc,tdNombre,tdZona,tdEstado,tdIngreso,tdRetiro,tdAcc);
     return tr;
   }
@@ -168,102 +180,49 @@ export const SupervisorsAdmin=(mount,deps={})=>{
   }
   function actionsCell(s){
     const box=el('div',{className:'row-actions'},[]);
-    const btnEdit=el('button',{className:'btn'},['Editar']);
-    btnEdit.addEventListener('click',()=>{ const tr=tbody.querySelector(`tr[data-id="${s.id}"]`); if(tr) startEdit(tr,s); });
-    const btnToggle=el('button',{className:'btn '+(s.estado==='activo'?'btn--danger':'' )},[ s.estado==='activo'?'Desactivar':'Activar' ]);
-    btnToggle.addEventListener('click',async()=>{
-      const target=s.estado==='activo'?'inactivo':'activo';
-      try{
-        let retiroDate=null;
-        const suggested=toInputDate(new Date()) || '';
-        const modal=await showActionModal({
-          title:`${target==='inactivo'?'Desactivar':'Activar'} supervisor`,
-          message:`Supervisor: ${s.nombre||'-'}`,
-          confirmText:target==='inactivo'?'Desactivar':'Activar',
-          fields:[
-            ...(target==='inactivo' ? [{ id:'retiroDate', label:'Fecha de retiro', type:'date', required:true, value:suggested }] : []),
-            { id:'detail', label:'Detalle', type:'textarea', required:true, placeholder:'Escribe el motivo o detalle de esta accion' }
-          ]
-        });
-        if(!modal.confirmed) return;
-        if(target==='inactivo'){
-          const retiro=String(modal.values.retiroDate||'').trim();
-          if(!/^\d{4}-\d{2}-\d{2}$/.test(retiro)) return alert('Fecha invalida. Usa formato AAAA-MM-DD.');
-          retiroDate=new Date(`${retiro}T00:00:00`);
-          if(Number.isNaN(retiroDate.getTime())) return alert('Fecha invalida.');
-        }
-        await deps.setSupervisorStatus?.(s.id,target,retiroDate);
-        await deps.addAuditLog?.({ targetType:'supervisor', targetId:s.id, action: target==='activo'?'activate_supervisor':'deactivate_supervisor', before:{estado:s.estado, fechaRetiro:s.fechaRetiro||null}, after:{estado:target, fechaRetiro:retiroDate||null}, note: modal.values.detail||null });
-      }catch(err){ alert('Error: '+(err?.message||err)); }
-    });
-    const btnInfo=el('button',{className:'btn',title:'Ver informacion del registro','aria-label':'Ver informacion del registro'},['ⓘ']);
+    const btnEditZone=el('button',{className:'btn btn--icon',type:'button',title:'Editar zona','aria-label':'Editar zona'},['\u270E']);
+    btnEditZone.addEventListener('click',()=> startEditZone(s));
+    const btnInfo=el('button',{className:'btn btn--icon',title:'Ver informacion','aria-label':'Ver informacion'},['\u24D8']);
     btnInfo.addEventListener('click',()=>{ const info=auditInfoData(s); showInfoModal('Informacion del registro',[`Evento: ${info.action}`,`Usuario: ${info.user}`,`Fecha: ${info.date}`]); });
-    box.append(btnEdit,btnToggle,btnInfo); return box;
+    box.append(btnEditZone,btnInfo); return box;
   }
-  function startEdit(tr,s){
-    const cur={
-      codigo:s.codigo||'',
-      documento:s.documento||'',
-      nombre:s.nombre||'',
-      zonaCodigo:s.zonaCodigo||'',
-      fechaIngreso: toInputDate(s.fechaIngreso),
-      fechaRetiro: toInputDate(s.fechaRetiro)
-    };
-    const tds=tr.querySelectorAll('td');
-    tds[0].replaceChildren(el('input',{className:'input',value:cur.codigo,style:'max-width:140px'}));
-    tds[1].replaceChildren(el('input',{className:'input',value:cur.documento,style:'max-width:160px'}));
-    tds[2].replaceChildren(el('input',{className:'input',value:cur.nombre,style:'max-width:220px'}));
-    tds[3].replaceChildren(el('select',{className:'select'},buildOptions(zoneList,cur.zonaCodigo)));
-    tds[4].replaceChildren(statusBadge(s.estado));
-    tds[5].replaceChildren(el('input',{className:'input',type:'date',value:cur.fechaIngreso||''}));
-    tds[6].replaceChildren(el('input',{className:'input',type:'date',value:cur.fechaRetiro||''}));
-    const box=el('div',{className:'row-actions'},[]);
-    const btnSave=el('button',{className:'btn btn--primary'},['Guardar']);
-    const btnCancel=el('button',{className:'btn'},['Cancelar']);
-    btnSave.addEventListener('click',async()=>{
-      const newCode=tds[0].querySelector('input').value.trim();
-      const newDoc=tds[1].querySelector('input').value.trim();
-      const newName=tds[2].querySelector('input').value.trim();
-      const newZoneCode=tds[3].querySelector('select').value;
-      const newIngreso=tds[5].querySelector('input').value.trim();
-      const newRetiro=tds[6].querySelector('input').value.trim();
-      if(!newCode||!newDoc||!newName) return alert('Completa codigo, documento y nombre.');
-      if(!newZoneCode) return alert('Selecciona una zona.');
-      if(!newIngreso) return alert('Selecciona la fecha de ingreso.');
-      if(s.estado==='inactivo' && !newRetiro) return alert('Para supervisores inactivos, la fecha de retiro es obligatoria.');
-      const modal=await showActionModal({
-        title:'Confirmar modificacion',
-        message:`Supervisor: ${s.nombre||'-'}`,
-        confirmText:'Guardar cambios',
-        fields:[{ id:'detail', label:'Detalle de la modificacion', type:'textarea', required:true, placeholder:'Describe brevemente el cambio realizado' }]
-      });
-      if(!modal.confirmed) return;
-      try{
-        if(newCode!==s.codigo){ const dup=await deps.findSupervisorByCode?.(newCode); if(dup && dup.id!==s.id) return alert('Ya existe un supervisor con ese codigo.'); }
-        if(newDoc!==s.documento){ const dupDoc=await deps.findSupervisorByDocument?.(newDoc); if(dupDoc && dupDoc.id!==s.id) return alert('Ya existe un supervisor con ese documento.'); }
-        const newZone=zoneList.find(z=>z.codigo===newZoneCode);
-        await deps.updateSupervisor?.(s.id,{
-          codigo:newCode,
-          documento:newDoc,
-          nombre:newName,
-          zonaCodigo:newZoneCode,
-          zonaNombre:newZone?.nombre||null,
-          fechaIngreso: new Date(`${newIngreso}T00:00:00`),
-          fechaRetiro: newRetiro ? new Date(`${newRetiro}T00:00:00`) : null
-        });
-        await deps.addAuditLog?.({ targetType:'supervisor', targetId:s.id, action:'update_supervisor', before:{ codigo:s.codigo, documento:s.documento, nombre:s.nombre, zonaCodigo:s.zonaCodigo, fechaRetiro:s.fechaRetiro||null }, after:{ codigo:newCode, documento:newDoc, nombre:newName, zonaCodigo:newZoneCode, fechaRetiro:newRetiro||null }, note: modal.values.detail||null });
-      }catch(err){ alert('Error: '+(err?.message||err)); }
+  async function startEditZone(s){
+    const zoneCode=String(s.zonaCodigo||'').trim();
+    const zoneName=String(s.zonaNombre||zoneNameByCode(zoneCode)||'-').trim()||'-';
+    const editable=(zoneList||[]).map((z)=> ({ id:String(z.codigo||''), name:String(z.nombre||z.codigo||'').trim()||String(z.codigo||'') }))
+      .filter((z)=> z.id);
+    if(!editable.length){ alert('No hay zonas activas disponibles.'); return; }
+    const modal=await showActionModal({
+      title:'Editar zona del supervisor',
+      message:`Supervisor: ${s.nombre||'-'}\nZona actual: ${zoneName} (${zoneCode||'-'})`,
+      confirmText:'Guardar zona',
+      fields:[
+        { id:'zonaCodigo', label:'Nueva zona', type:'select', required:true, options:editable.map((z)=> ({ value:z.id, label:`${z.name} (${z.id})` })), value:zoneCode },
+        { id:'detail', label:'Detalle del cambio', type:'textarea', required:true, placeholder:'Describe por que cambia la zona' }
+      ]
     });
-    btnCancel.addEventListener('click',()=> render());
-    box.append(btnSave,btnCancel); tds[7].replaceChildren(box);
-  }
-  function toInputDate(ts){
+    if(!modal.confirmed) return;
+    const newZoneCode=String(modal.values?.zonaCodigo||'').trim();
+    if(!newZoneCode) return;
+    if(newZoneCode===zoneCode) return;
+    const newZone=zoneList.find((z)=> String(z.codigo||'')===newZoneCode);
+    if(!newZone){ alert('La zona seleccionada no es valida.'); return; }
     try{
-      const d=ts?.toDate? ts.toDate(): (ts? new Date(ts): null);
-      if(!d) return '';
-      const pad=(n)=> String(n).padStart(2,'0');
-      return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
-    }catch{ return ''; }
+      await deps.updateSupervisor?.(s.id,{
+        zonaCodigo:newZoneCode,
+        zonaNombre:newZone?.nombre||null
+      });
+      await deps.addAuditLog?.({
+        targetType:'supervisor',
+        targetId:s.id,
+        action:'update_supervisor_zone',
+        before:{ zonaCodigo:zoneCode||null, zonaNombre:s.zonaNombre||zoneName||null },
+        after:{ zonaCodigo:newZoneCode, zonaNombre:newZone?.nombre||null },
+        note: modal.values?.detail||null
+      });
+    }catch(err){
+      alert('Error: '+(err?.message||err));
+    }
   }
   unZones=deps.streamZones?.((arr)=>{ zoneList=(arr||[]).filter(z=>z.estado!=='inactivo'); renderZoneSelect(); render(); }) || (()=>{});
   unEmp=deps.streamEmployees?.((arr)=>{ employees=arr||[]; render(); }) || (()=>{});

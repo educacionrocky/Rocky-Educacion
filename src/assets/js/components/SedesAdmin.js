@@ -225,9 +225,9 @@ export const SedesAdmin=(mount,deps={})=>{
   }
   function actionsCell(s){
     const box=el('div',{className:'row-actions'},[]);
-    const btnEdit=el('button',{className:'btn'},['Editar']);
+    const btnEdit=el('button',{className:'btn btn--icon',title:'Editar'},['\u270E']);
     btnEdit.addEventListener('click',()=>{ const tr=tbody.querySelector(`tr[data-id="${s.id}"]`); if(tr) startEdit(tr,s); });
-    const btnToggle=el('button',{className:'btn '+(s.estado==='activo'?'btn--danger':'' )},[ s.estado==='activo'?'Desactivar':'Activar' ]);
+    const btnToggle=el('button',{className:'btn btn--icon '+(s.estado==='activo'?'btn--danger':'' ),title:s.estado==='activo'?'Desactivar':'Activar','aria-label':s.estado==='activo'?'Desactivar':'Activar'},[ s.estado==='activo'?'\u23FB':'\u21BA' ]);
     btnToggle.addEventListener('click',async()=>{
       const target=s.estado==='activo'?'inactivo':'activo';
       const modal=await showActionModal({
@@ -239,7 +239,7 @@ export const SedesAdmin=(mount,deps={})=>{
       if(!modal.confirmed) return;
       try{ await deps.setSedeStatus?.(s.id,target); await deps.addAuditLog?.({ targetType:'sede', targetId:s.id, action: target==='activo'?'activate_sede':'deactivate_sede', before:{estado:s.estado}, after:{estado:target}, note: modal.values.detail||null }); }catch(e){ alert('Error: '+(e?.message||e)); }
     });
-    const btnInfo=el('button',{className:'btn',title:'Ver informacion del registro','aria-label':'Ver informacion del registro'},['ⓘ']);
+    const btnInfo=el('button',{className:'btn btn--icon',title:'Ver informacion','aria-label':'Ver informacion'},['\u24D8']);
     btnInfo.addEventListener('click',()=>{ const info=auditInfoData(s); showInfoModal('Informacion del registro',[`Evento: ${info.action}`,`Usuario: ${info.user}`,`Fecha: ${info.date}`]); });
     box.append(btnEdit,btnToggle,btnInfo); return box;
   }

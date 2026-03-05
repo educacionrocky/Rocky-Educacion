@@ -1,7 +1,7 @@
 // Firebase v12.9.0 (CDN)
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/12.9.0/firebase-app.js';
 import { getAuth, onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut } from 'https://www.gstatic.com/firebasejs/12.9.0/firebase-auth.js';
-import { getFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, collection, addDoc, getDocs, onSnapshot, query, orderBy, where, serverTimestamp, limit, runTransaction, writeBatch } from 'https://www.gstatic.com/firebasejs/12.9.0/firebase-firestore.js';
+import { getFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, collection, addDoc, getDocs, onSnapshot, query, orderBy, where, serverTimestamp, limit, runTransaction, writeBatch, documentId } from 'https://www.gstatic.com/firebasejs/12.9.0/firebase-firestore.js';
 
 export const firebaseConfig = {
   apiKey: "AIzaSyAkZJuves5WDo3QA5JJ3qlb5Lb_D5j1FPE",
@@ -15,6 +15,7 @@ export const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db   = getFirestore(app);
+const EMPLOYEE_CARGO_HISTORY_COL='employee_cargo_history';
 
 // ===== Auth =====
 export const authState = (cb) => onAuthStateChanged(auth, cb);
@@ -29,6 +30,7 @@ export async function createUserProfile(uid, data){
     email: (data.email||'').toLowerCase(),
     displayName: data.nombre || null,
     documento: data.documento || null,
+    estado: 'activo',
     createdAt: serverTimestamp(),
   }), { merge: true });
 }
@@ -36,7 +38,7 @@ export async function ensureUserProfile(user){
   const ref = doc(db, 'users', user.uid);
   const snap = await getDoc(ref);
   if(!snap.exists()){
-    await setDoc(ref, replaceUndefined({ email: (user.email||'').toLowerCase(), displayName: user.displayName || null, createdAt: serverTimestamp() }));
+    await setDoc(ref, replaceUndefined({ email: (user.email||'').toLowerCase(), displayName: user.displayName || null, estado:'activo', createdAt: serverTimestamp() }));
   }
 }
 export async function loadUserProfile(uid){ const ref=doc(db,'users',uid); const snap=await getDoc(ref); return snap.exists()? snap.data(): null; }
@@ -76,6 +78,24 @@ function normalizeEmployeePhoneCO(value){
   if(digits.length===10) return `57${digits}`;
   return digits;
 }
+function normalizeCargoCrudAlignment(value){
+  const raw=String(value||'').trim().toLowerCase();
+  if(raw==='supervisor') return 'supervisor';
+  if(raw==='supernumerario') return 'supernumerario';
+  return 'empleado';
+}
+function normalizeDateOrNow(value){
+  if(value instanceof Date && !Number.isNaN(value.getTime())) return value;
+  if(value && typeof value.toDate==='function'){
+    const d=value.toDate();
+    if(d instanceof Date && !Number.isNaN(d.getTime())) return d;
+  }
+  if(typeof value==='string' && value.trim()){
+    const d=new Date(value);
+    if(!Number.isNaN(d.getTime())) return d;
+  }
+  return new Date();
+}
 export async function addAuditLog(entry){
   const ref=collection(db,'audit_logs');
   const safe=replaceUndefined(entry||{});
@@ -86,6 +106,29 @@ export function streamAuditLogs(onData,max=50){ const ref=collection(db,'audit_l
 // ===== Users (admin) =====
 export function streamUsers(onData){ const ref=collection(db,'users'); return onSnapshot(ref,(snap)=> onData(snap.docs.map(d=>({ uid:d.id, ...d.data() }))) ); }
 export async function setUserRole(uid, role){ const ref=doc(db,'users',uid); await updateDoc(ref,replaceUndefined({ role })); }
+export async function setUserStatus(uid, estado){
+  const ref=doc(db,'users',uid);
+  await updateDoc(ref,replaceUndefined({
+    estado,
+    lastModifiedAt: serverTimestamp(),
+    lastModifiedByUid: auth.currentUser?.uid||null,
+    lastModifiedByEmail:(auth.currentUser?.email||'').toLowerCase()||null
+  }));
+}
+export async function softDeleteUser(uid){
+  const ref=doc(db,'users',uid);
+  await updateDoc(ref,replaceUndefined({
+    estado:'eliminado',
+    role:'empleado',
+    deletedAt: serverTimestamp(),
+    deletedByUid: auth.currentUser?.uid||null,
+    deletedByEmail:(auth.currentUser?.email||'').toLowerCase()||null,
+    lastModifiedAt: serverTimestamp(),
+    lastModifiedByUid: auth.currentUser?.uid||null,
+    lastModifiedByEmail:(auth.currentUser?.email||'').toLowerCase()||null
+  }));
+  try{ await deleteDoc(doc(db,'user_overrides',uid)); }catch{}
+}
 export async function findUserByEmail(email){ if(!email) return null; const ref=collection(db,'users'); const qy=query(ref, where('email','==', email.toLowerCase())); const snap=await getDocs(qy); if(snap.empty) return null; const d=snap.docs[0]; return { uid:d.id, ...d.data() };
 }
 
@@ -207,6 +250,223 @@ export async function createSedesBulk(rows=[]){
 const EMPLOYEES_COL='employees';
 export async function getNextEmployeeCode(prefix='EMP',width=4){ const ref=doc(db,COUNTERS_COL,'employees'); const next=await runTransaction(db, async (tx)=>{ const snap=await tx.get(ref); let last=0; if(snap.exists()) last=Number(snap.data().last||0); const val=last+1; tx.set(ref,{ last:val },{ merge:true }); return val; }); const num=String(next).padStart(width,'0'); return `${prefix}-${num}`; }
 export function streamEmployees(onData){ const ref=collection(db,EMPLOYEES_COL); const qy=query(ref,orderBy('createdAt','desc')); return onSnapshot(qy,(snap)=> onData(snap.docs.map(d=>({ id:d.id, ...d.data() })))); }
+async function getCargoCrudAlignmentByCode(cargoCodigo,cargoNombre=null){
+  const code=String(cargoCodigo||'').trim();
+  const inferByName=(name)=>{
+    const n=String(name||'').trim().toLowerCase();
+    if(!n) return 'empleado';
+    if(n.includes('supernumer')) return 'supernumerario';
+    if(n.includes('supervisor')) return 'supervisor';
+    return 'empleado';
+  };
+  if(!code) return inferByName(cargoNombre||'');
+  const ref=collection(db,CARGOS_COL);
+  const qy=query(ref, where('codigo','==', code), limit(1));
+  const snap=await getDocs(qy);
+  if(snap.empty) return inferByName(cargoNombre||'');
+  const row=snap.docs[0].data()||{};
+  const direct=normalizeCargoCrudAlignment(row.alineacionCrud);
+  if(direct!=='empleado') return direct;
+  return inferByName(row.nombre||cargoNombre||'');
+}
+async function findRecordByDocument(colName,documento){
+  const docNum=String(documento||'').trim();
+  if(!docNum) return null;
+  const qy=query(collection(db,colName), where('documento','==', docNum), limit(1));
+  const snap=await getDocs(qy);
+  if(snap.empty) return null;
+  const d=snap.docs[0];
+  return { id:d.id, ...d.data() };
+}
+async function resolveZoneBySedeCode(sedeCodigo){
+  const code=String(sedeCodigo||'').trim();
+  if(!code) return { zonaCodigo:null, zonaNombre:null };
+  const qy=query(collection(db,SEDES_COL), where('codigo','==', code), limit(1));
+  const snap=await getDocs(qy);
+  if(snap.empty) return { zonaCodigo:null, zonaNombre:null };
+  const row=snap.docs[0].data()||{};
+  return {
+    zonaCodigo: row.zonaCodigo||null,
+    zonaNombre: row.zonaNombre||null
+  };
+}
+async function listEmployeeCargoHistoryRows(employeeId){
+  const empId=String(employeeId||'').trim();
+  if(!empId) return [];
+  const qy=query(collection(db,EMPLOYEE_CARGO_HISTORY_COL), where('employeeId','==', empId));
+  const snap=await getDocs(qy);
+  return snap.docs.map((d)=>({ id:d.id, ...d.data() }));
+}
+async function openEmployeeCargoPeriod({ employeeId, employeeCodigo, documento, cargoCodigo, cargoNombre, fechaIngreso, source='manual' }){
+  const empId=String(employeeId||'').trim();
+  if(!empId || !cargoCodigo) return null;
+  const ingreso=normalizeDateOrNow(fechaIngreso);
+  const ref=collection(db,EMPLOYEE_CARGO_HISTORY_COL);
+  const docRef=await addDoc(ref, replaceUndefined({
+    employeeId: empId,
+    employeeCodigo: employeeCodigo||null,
+    documento: documento||null,
+    cargoCodigo: cargoCodigo||null,
+    cargoNombre: cargoNombre||null,
+    fechaIngreso: ingreso,
+    fechaRetiro: null,
+    source,
+    createdByUid:auth.currentUser?.uid||null,
+    createdByEmail:(auth.currentUser?.email||'').toLowerCase()||null,
+    createdAt: serverTimestamp(),
+    lastModifiedByUid:auth.currentUser?.uid||null,
+    lastModifiedByEmail:(auth.currentUser?.email||'').toLowerCase()||null,
+    lastModifiedAt: serverTimestamp()
+  }));
+  return docRef.id;
+}
+async function closeEmployeeOpenCargoPeriods(employeeId,{ fechaRetiro=null }={}){
+  const rows=await listEmployeeCargoHistoryRows(employeeId);
+  const retiro=normalizeDateOrNow(fechaRetiro);
+  for(const row of rows){
+    if(row.fechaRetiro) continue;
+    await updateDoc(doc(db,EMPLOYEE_CARGO_HISTORY_COL,row.id), replaceUndefined({
+      fechaRetiro: retiro,
+      lastModifiedByUid:auth.currentUser?.uid||null,
+      lastModifiedByEmail:(auth.currentUser?.email||'').toLowerCase()||null,
+      lastModifiedAt: serverTimestamp()
+    }));
+  }
+}
+async function deactivateLinkedSupervisorsByDocument(documento,fechaRetiro){
+  const docNum=String(documento||'').trim();
+  if(!docNum) return;
+  const retiro=normalizeDateOrNow(fechaRetiro);
+  const qy=query(collection(db,SUPERVISORS_COL), where('documento','==', docNum));
+  const snap=await getDocs(qy);
+  for(const d of snap.docs){
+    await updateDoc(doc(db,SUPERVISORS_COL,d.id), replaceUndefined({
+      estado:'inactivo',
+      fechaRetiro: retiro,
+      lastModifiedByUid:auth.currentUser?.uid||null,
+      lastModifiedByEmail:(auth.currentUser?.email||'').toLowerCase()||null,
+      lastModifiedAt: serverTimestamp()
+    }));
+  }
+}
+async function deactivateLinkedSupernumerariosByDocument(documento,fechaRetiro,motivoEstado='traslado_empleado'){
+  const docNum=String(documento||'').trim();
+  if(!docNum) return;
+  const retiro=normalizeDateOrNow(fechaRetiro);
+  const qy=query(collection(db,SUPERNUMERARIOS_COL), where('documento','==', docNum));
+  const snap=await getDocs(qy);
+  for(const d of snap.docs){
+    await updateDoc(doc(db,SUPERNUMERARIOS_COL,d.id), replaceUndefined({
+      estado:'inactivo',
+      fechaRetiro: retiro,
+      motivoEstado,
+      lastModifiedByUid:auth.currentUser?.uid||null,
+      lastModifiedByEmail:(auth.currentUser?.email||'').toLowerCase()||null,
+      lastModifiedAt: serverTimestamp()
+    }));
+  }
+}
+async function upsertSupervisorByEmployee({ documento, nombre, sedeCodigo, fechaIngreso }){
+  const docNum=String(documento||'').trim();
+  if(!docNum) return;
+  const existing=await findRecordByDocument(SUPERVISORS_COL,docNum);
+  const zone=await resolveZoneBySedeCode(sedeCodigo);
+  const ingreso=normalizeDateOrNow(fechaIngreso);
+  if(existing){
+    await updateDoc(doc(db,SUPERVISORS_COL,existing.id), replaceUndefined({
+      documento:docNum,
+      nombre:nombre||null,
+      zonaCodigo:zone.zonaCodigo,
+      zonaNombre:zone.zonaNombre,
+      fechaIngreso: ingreso,
+      estado:'activo',
+      fechaRetiro:null,
+      lastModifiedByUid:auth.currentUser?.uid||null,
+      lastModifiedByEmail:(auth.currentUser?.email||'').toLowerCase()||null,
+      lastModifiedAt: serverTimestamp()
+    }));
+    return existing.id;
+  }
+  const code=await getNextSupervisorCode();
+  return createSupervisor({
+    codigo:code,
+    documento:docNum,
+    nombre:nombre||null,
+    zonaCodigo:zone.zonaCodigo,
+    zonaNombre:zone.zonaNombre,
+    fechaIngreso:ingreso
+  });
+}
+async function upsertSupernumerarioByEmployee({ documento, nombre, telefono, cargoCodigo, cargoNombre, sedeCodigo, sedeNombre, fechaIngreso }){
+  const docNum=String(documento||'').trim();
+  if(!docNum) return;
+  const existing=await findRecordByDocument(SUPERNUMERARIOS_COL,docNum);
+  const ingreso=normalizeDateOrNow(fechaIngreso);
+  if(existing){
+    await updateDoc(doc(db,SUPERNUMERARIOS_COL,existing.id), replaceUndefined({
+      documento:docNum,
+      nombre:nombre||null,
+      telefono:normalizeEmployeePhoneCO(telefono),
+      cargoCodigo:cargoCodigo||null,
+      cargoNombre:cargoNombre||null,
+      sedeCodigo:sedeCodigo||null,
+      sedeNombre:sedeNombre||null,
+      fechaIngreso: ingreso,
+      estado:'activo',
+      fechaRetiro:null,
+      motivoEstado:null,
+      lastModifiedByUid:auth.currentUser?.uid||null,
+      lastModifiedByEmail:(auth.currentUser?.email||'').toLowerCase()||null,
+      lastModifiedAt: serverTimestamp()
+    }));
+    return existing.id;
+  }
+  const code=await getNextSupernumerarioCode();
+  return createSupernumerario({
+    codigo:code,
+    documento:docNum,
+    nombre:nombre||null,
+    telefono:normalizeEmployeePhoneCO(telefono),
+    cargoCodigo:cargoCodigo||null,
+    cargoNombre:cargoNombre||null,
+    sedeCodigo:sedeCodigo||null,
+    sedeNombre:sedeNombre||null,
+    fechaIngreso:ingreso
+  });
+}
+async function syncLinkedRecordsByCargoAlignment({ alignment, documento, nombre, telefono, cargoCodigo, cargoNombre, sedeCodigo, sedeNombre, fechaCambio }){
+  const docNum=String(documento||'').trim();
+  if(!docNum) return;
+  const changeDate=normalizeDateOrNow(fechaCambio);
+  if(alignment==='supervisor'){
+    await deactivateLinkedSupernumerariosByDocument(docNum,changeDate,'traslado_empleado');
+    await upsertSupervisorByEmployee({ documento:docNum, nombre, sedeCodigo, fechaIngreso:changeDate });
+    return;
+  }
+  if(alignment==='supernumerario'){
+    await deactivateLinkedSupervisorsByDocument(docNum,changeDate);
+    await upsertSupernumerarioByEmployee({ documento:docNum, nombre, telefono, cargoCodigo, cargoNombre, sedeCodigo, sedeNombre, fechaIngreso:changeDate });
+    return;
+  }
+  await deactivateLinkedSupervisorsByDocument(docNum,changeDate);
+  await deactivateLinkedSupernumerariosByDocument(docNum,changeDate,'traslado_empleado');
+}
+async function autoLinkEmployeeByCargo({ documento, nombre, telefono, cargoCodigo, cargoNombre, sedeCodigo, sedeNombre, fechaIngreso }){
+  const docNum=String(documento||'').trim();
+  if(!docNum) return;
+  const alignment=await getCargoCrudAlignmentByCode(cargoCodigo,cargoNombre);
+  await syncLinkedRecordsByCargoAlignment({
+    alignment,
+    documento:docNum,
+    nombre,
+    telefono,
+    cargoCodigo,
+    cargoNombre,
+    sedeCodigo,
+    sedeNombre,
+    fechaCambio:fechaIngreso||new Date()
+  });
+}
 export async function createEmployee({ codigo, documento, nombre, telefono, cargoCodigo, cargoNombre, sedeCodigo, sedeNombre, fechaIngreso }){
   const ref=collection(db,EMPLOYEES_COL);
   const docRef=await addDoc(ref,replaceUndefined({
@@ -228,6 +488,25 @@ export async function createEmployee({ codigo, documento, nombre, telefono, carg
     lastModifiedByEmail:(auth.currentUser?.email||'').toLowerCase()||null,
     lastModifiedAt: serverTimestamp()
   }));
+  try{
+    await closeEmployeeOpenCargoPeriods(docRef.id,{ fechaRetiro:fechaIngreso||new Date() });
+    await openEmployeeCargoPeriod({
+      employeeId:docRef.id,
+      employeeCodigo:codigo||null,
+      documento:documento||null,
+      cargoCodigo:cargoCodigo||null,
+      cargoNombre:cargoNombre||null,
+      fechaIngreso:fechaIngreso||new Date(),
+      source:'create_employee'
+    });
+  }catch(err){
+    console.warn('No se pudo registrar el historial de cargo al crear empleado:', err);
+  }
+  try{
+    await autoLinkEmployeeByCargo({ documento, nombre, telefono, cargoCodigo, cargoNombre, sedeCodigo, sedeNombre, fechaIngreso });
+  }catch(err){
+    console.warn('No se pudo vincular automaticamente el empleado por cargo:', err);
+  }
   return docRef.id;
 }
 export async function updateEmployee(id,data={}){
@@ -236,6 +515,10 @@ export async function updateEmployee(id,data={}){
   const currentSnap=await getDoc(ref);
   const current=currentSnap.exists()? currentSnap.data(): {};
   const previousDocumento=String(current.documento||'').trim();
+  const previousCargoCodigo=String(current.cargoCodigo||'').trim();
+  const previousCargoNombre=current.cargoNombre||null;
+  const currentEstado=String(current.estado||'activo').trim().toLowerCase();
+  const previousCodigo=current.codigo||null;
   if(typeof codigo==='string') patch.codigo=codigo;
   if(typeof documento==='string') patch.documento=documento;
   if(typeof nombre==='string') patch.nombre=nombre;
@@ -251,8 +534,53 @@ export async function updateEmployee(id,data={}){
   patch.lastModifiedAt=serverTimestamp();
   await updateDoc(ref,replaceUndefined(patch));
 
-  // Sync linked records (supervisors/supernumerarios) when this employee is also there.
   const finalDocumento=(typeof documento==='string' ? String(documento).trim() : previousDocumento);
+  const finalCargoCodigo=(typeof cargoCodigo==='string' ? cargoCodigo : previousCargoCodigo);
+  const finalCargoNombre=(typeof cargoNombre==='string' ? cargoNombre : previousCargoNombre);
+  const finalCodigo=(typeof codigo==='string' ? codigo : previousCodigo);
+  const finalNombre=(typeof nombre==='string' ? nombre : current.nombre || null);
+  const finalTelefono=(typeof telefono==='string' ? normalizeEmployeePhoneCO(telefono) : current.telefono || null);
+  const finalSedeCodigo=(typeof sedeCodigo==='string' ? sedeCodigo : current.sedeCodigo || null);
+  const finalSedeNombre=(typeof sedeNombre==='string' ? sedeNombre : current.sedeNombre || null);
+  const finalAlignment=await getCargoCrudAlignmentByCode(finalCargoCodigo,finalCargoNombre);
+  const cargoChanged=Boolean(finalCargoCodigo) && finalCargoCodigo!==previousCargoCodigo;
+  const changeDate=normalizeDateOrNow(fechaIngreso||new Date());
+
+  if(cargoChanged){
+    try{
+      await closeEmployeeOpenCargoPeriods(id,{ fechaRetiro:changeDate });
+      if(currentEstado!=='inactivo'){
+        await openEmployeeCargoPeriod({
+          employeeId:id,
+          employeeCodigo:finalCodigo,
+          documento:finalDocumento||null,
+          cargoCodigo:finalCargoCodigo||null,
+          cargoNombre:finalCargoNombre||null,
+          fechaIngreso:changeDate,
+          source:'cargo_change'
+        });
+      }
+    }catch(err){
+      console.warn('No se pudo actualizar historial al cambiar cargo del empleado:', err);
+    }
+    try{
+      await syncLinkedRecordsByCargoAlignment({
+        alignment:finalAlignment,
+        documento:finalDocumento,
+        nombre:finalNombre,
+        telefono:finalTelefono,
+        cargoCodigo:finalCargoCodigo,
+        cargoNombre:finalCargoNombre,
+        sedeCodigo:finalSedeCodigo,
+        sedeNombre:finalSedeNombre,
+        fechaCambio:changeDate
+      });
+    }catch(err){
+      console.warn('No se pudo sincronizar vinculados al cambiar cargo del empleado:', err);
+    }
+  }
+
+  // Sync linked records (supervisors/supernumerarios) when this employee is also there.
   const docsToSync=Array.from(new Set([previousDocumento, finalDocumento].filter(Boolean)));
 
   const supPatch={};
@@ -283,6 +611,10 @@ export async function updateEmployee(id,data={}){
     const supSnap=await getDocs(qSup);
     for(const d of supSnap.docs){ await updateDoc(doc(db,SUPERVISORS_COL,d.id), replaceUndefined(supPatch)); }
 
+    if(finalAlignment==='supervisor'){
+      await deactivateLinkedSupernumerariosByDocument(docNum,changeDate,'traslado_empleado');
+      continue;
+    }
     const qSupn=query(collection(db,SUPERNUMERARIOS_COL), where('documento','==', docNum));
     const supnSnap=await getDocs(qSupn);
     for(const d of supnSnap.docs){ await updateDoc(doc(db,SUPERNUMERARIOS_COL,d.id), replaceUndefined(supnPatch)); }
@@ -293,6 +625,7 @@ export async function setEmployeeStatus(id,estado,fechaRetiro=null){
   const snap=await getDoc(ref);
   const current=snap.exists()? snap.data(): {};
   const docNum=String(current.documento||'').trim();
+  const alignment=await getCargoCrudAlignmentByCode(current.cargoCodigo||'', current.cargoNombre||'');
   const retiroValue=estado==='inactivo' ? (fechaRetiro||serverTimestamp()) : null;
   await updateDoc(ref,replaceUndefined({
     estado,
@@ -302,6 +635,24 @@ export async function setEmployeeStatus(id,estado,fechaRetiro=null){
     lastModifiedAt: serverTimestamp()
   }));
 
+  try{
+    if(estado==='inactivo'){
+      await closeEmployeeOpenCargoPeriods(id,{ fechaRetiro:fechaRetiro||new Date() });
+    }else if(estado==='activo'){
+      await openEmployeeCargoPeriod({
+        employeeId:id,
+        employeeCodigo:current.codigo||null,
+        documento:docNum||null,
+        cargoCodigo:current.cargoCodigo||null,
+        cargoNombre:current.cargoNombre||null,
+        fechaIngreso:new Date(),
+        source:'reactivate_employee'
+      });
+    }
+  }catch(err){
+    console.warn('No se pudo actualizar historial de cargo al cambiar estado del empleado:', err);
+  }
+
   if(!docNum) return;
   const commonPatch={
     estado,
@@ -310,17 +661,45 @@ export async function setEmployeeStatus(id,estado,fechaRetiro=null){
     lastModifiedByEmail:(auth.currentUser?.email||'').toLowerCase()||null,
     lastModifiedAt: serverTimestamp()
   };
-  const qSup=query(collection(db,SUPERVISORS_COL), where('documento','==', docNum));
-  const supSnap=await getDocs(qSup);
-  for(const d of supSnap.docs){ await updateDoc(doc(db,SUPERVISORS_COL,d.id), replaceUndefined(commonPatch)); }
+  if(estado==='inactivo'){
+    const qSup=query(collection(db,SUPERVISORS_COL), where('documento','==', docNum));
+    const supSnap=await getDocs(qSup);
+    for(const d of supSnap.docs){ await updateDoc(doc(db,SUPERVISORS_COL,d.id), replaceUndefined(commonPatch)); }
 
-  const qSupn=query(collection(db,SUPERNUMERARIOS_COL), where('documento','==', docNum));
-  const supnSnap=await getDocs(qSupn);
-  for(const d of supnSnap.docs){ await updateDoc(doc(db,SUPERNUMERARIOS_COL,d.id), replaceUndefined(commonPatch)); }
+    const qSupn=query(collection(db,SUPERNUMERARIOS_COL), where('documento','==', docNum));
+    const supnSnap=await getDocs(qSupn);
+    for(const d of supnSnap.docs){ await updateDoc(doc(db,SUPERNUMERARIOS_COL,d.id), replaceUndefined(commonPatch)); }
+    return;
+  }
+  await syncLinkedRecordsByCargoAlignment({
+    alignment,
+    documento:docNum,
+    nombre:current.nombre||null,
+    telefono:current.telefono||null,
+    cargoCodigo:current.cargoCodigo||null,
+    cargoNombre:current.cargoNombre||null,
+    sedeCodigo:current.sedeCodigo||null,
+    sedeNombre:current.sedeNombre||null,
+    fechaCambio:new Date()
+  });
 }
 export async function findEmployeeByCode(codigo){ if(!codigo) return null; const ref=collection(db,EMPLOYEES_COL); const qy=query(ref, where('codigo','==', codigo)); const snap=await getDocs(qy); if(snap.empty) return null; const d=snap.docs[0]; return { id:d.id, ...d.data() };
 }
 export async function findEmployeeByDocument(documento){ if(!documento) return null; const ref=collection(db,EMPLOYEES_COL); const qy=query(ref, where('documento','==', documento)); const snap=await getDocs(qy); if(snap.empty) return null; const d=snap.docs[0]; return { id:d.id, ...d.data() };
+}
+export function streamEmployeeCargoHistory(employeeId,onData){
+  const empId=String(employeeId||'').trim();
+  if(!empId){ onData?.([]); return ()=>{}; }
+  const qy=query(collection(db,EMPLOYEE_CARGO_HISTORY_COL), where('employeeId','==', empId));
+  return onSnapshot(qy,(snap)=>{
+    const rows=snap.docs.map((d)=>({ id:d.id, ...d.data() }));
+    rows.sort((a,b)=>{
+      const ta=normalizeDateOrNow(a.fechaIngreso).getTime();
+      const tb=normalizeDateOrNow(b.fechaIngreso).getTime();
+      return tb-ta;
+    });
+    onData(rows);
+  });
 }
 export async function createEmployeesBulk(rows=[]){
   const data=Array.isArray(rows)? rows.filter(Boolean): [];
@@ -334,9 +713,11 @@ export async function createEmployeesBulk(rows=[]){
     return last+1;
   });
   const batch=writeBatch(db);
+  const createdRows=[];
   data.forEach((row,idx)=>{
     const code=`EMP-${String(start+idx).padStart(4,'0')}`;
     const ref=doc(collection(db,EMPLOYEES_COL));
+    createdRows.push({ employeeId:ref.id, code, row });
     batch.set(ref, replaceUndefined({
       codigo:code,
       documento:row.documento||null,
@@ -358,6 +739,39 @@ export async function createEmployeesBulk(rows=[]){
     }));
   });
   await batch.commit();
+  for(const item of createdRows){
+    const row=item.row||{};
+    try{
+      await closeEmployeeOpenCargoPeriods(item.employeeId,{ fechaRetiro:row.fechaIngreso||new Date() });
+      await openEmployeeCargoPeriod({
+        employeeId:item.employeeId,
+        employeeCodigo:item.code,
+        documento:row.documento||null,
+        cargoCodigo:row.cargoCodigo||null,
+        cargoNombre:row.cargoNombre||null,
+        fechaIngreso:row.fechaIngreso||new Date(),
+        source:'bulk_create_employee'
+      });
+    }catch(err){
+      console.warn('No se pudo registrar historial de cargo para empleado de cargue masivo:', err);
+    }
+  }
+  for(const row of data){
+    try{
+      await autoLinkEmployeeByCargo({
+        documento:row.documento,
+        nombre:row.nombre,
+        telefono:row.telefono,
+        cargoCodigo:row.cargoCodigo,
+        cargoNombre:row.cargoNombre,
+        sedeCodigo:row.sedeCodigo,
+        sedeNombre:row.sedeNombre,
+        fechaIngreso:row.fechaIngreso||null
+      });
+    }catch(err){
+      console.warn('No se pudo vincular automaticamente un empleado de cargue masivo:', err);
+    }
+  }
   return { created:data.length };
 }
 export async function createSupernumerariosBulk(rows=[]){
@@ -566,12 +980,13 @@ export async function updateSupervisor(id,data={}){
     for(const d of empSnap.docs){ await updateDoc(doc(db,EMPLOYEES_COL,d.id), replaceUndefined(empPatch)); }
   }
 }
-export async function setSupervisorStatus(id,estado,fechaRetiro=null){
+export async function setSupervisorStatus(id,estado,fechaRetiro=null,opts={}){
   const ref=doc(db,SUPERVISORS_COL,id);
   const snap=await getDoc(ref);
   const current=snap.exists()? snap.data(): {};
   const docNum=String(current.documento||'').trim();
   const retiroValue=estado==='inactivo' ? (fechaRetiro||serverTimestamp()) : null;
+  const syncEmployee = opts?.syncEmployee !== false;
   await updateDoc(ref,replaceUndefined({
     estado,
     fechaRetiro: retiroValue,
@@ -579,7 +994,7 @@ export async function setSupervisorStatus(id,estado,fechaRetiro=null){
     lastModifiedByEmail:(auth.currentUser?.email||'').toLowerCase()||null,
     lastModifiedAt: serverTimestamp()
   }));
-  if(!docNum) return;
+  if(!docNum || !syncEmployee) return;
   const empPatch={
     estado,
     fechaRetiro: retiroValue,
@@ -600,11 +1015,12 @@ export async function findSupervisorByDocument(documento){ if(!documento) return
 const CARGOS_COL='cargos';
 export async function getNextCargoCode(prefix='CAR',width=4){ const ref=doc(db,COUNTERS_COL,'cargos'); const next=await runTransaction(db, async (tx)=>{ const snap=await tx.get(ref); let last=0; if(snap.exists()) last=Number(snap.data().last||0); const val=last+1; tx.set(ref,{ last:val },{ merge:true }); return val; }); const num=String(next).padStart(width,'0'); return `${prefix}-${num}`; }
 export function streamCargos(onData){ const ref=collection(db,CARGOS_COL); const qy=query(ref,orderBy('createdAt','desc')); return onSnapshot(qy,(snap)=> onData(snap.docs.map(d=>({ id:d.id, ...d.data() })))); }
-export async function createCargo({ codigo, nombre }){
+export async function createCargo({ codigo, nombre, alineacionCrud }){
   const ref=collection(db,CARGOS_COL);
   const docRef=await addDoc(ref,replaceUndefined({
     codigo:codigo||null,
     nombre:nombre||null,
+    alineacionCrud:normalizeCargoCrudAlignment(alineacionCrud),
     estado:'activo',
     createdByUid:auth.currentUser?.uid||null,
     createdByEmail:(auth.currentUser?.email||'').toLowerCase()||null,
@@ -612,7 +1028,7 @@ export async function createCargo({ codigo, nombre }){
   }));
   return docRef.id;
 }
-export async function updateCargo(id,{ codigo, nombre }){ const ref=doc(db,CARGOS_COL,id); const patch={}; if(typeof codigo==='string') patch.codigo=codigo; if(typeof nombre==='string') patch.nombre=nombre; await updateDoc(ref,replaceUndefined(patch)); }
+export async function updateCargo(id,{ codigo, nombre, alineacionCrud }){ const ref=doc(db,CARGOS_COL,id); const patch={}; if(typeof codigo==='string') patch.codigo=codigo; if(typeof nombre==='string') patch.nombre=nombre; if(typeof alineacionCrud==='string') patch.alineacionCrud=normalizeCargoCrudAlignment(alineacionCrud); await updateDoc(ref,replaceUndefined(patch)); }
 export async function setCargoStatus(id,estado){ const ref=doc(db,CARGOS_COL,id); await updateDoc(ref,replaceUndefined({ estado })); }
 export async function findCargoByCode(codigo){ if(!codigo) return null; const ref=collection(db,CARGOS_COL); const qy=query(ref, where('codigo','==', codigo)); const snap=await getDocs(qy); if(snap.empty) return null; const d=snap.docs[0]; return { id:d.id, ...d.data() };
 }
@@ -649,6 +1065,7 @@ const ATTENDANCE_COL='attendance';
 const ABSENTEEISM_COL='absenteeism';
 const SEDE_STATUS_COL='sede_status';
 const IMPORT_REPLACEMENTS_COL='import_replacements';
+const DASHBOARD_DOCS_COL='dashboard_docs';
 
 export function streamImportHistory(onData,max=200){
   const ref=collection(db,IMPORT_HISTORY_COL);
@@ -698,6 +1115,50 @@ export function streamImportReplacementsByDate(fecha,onData,onError){
     (err)=> onError?.(err)
   );
 }
+export function streamDailyMetricsByDate(fecha,onData,onError){
+  const day=String(fecha||'').trim();
+  if(!day){ onData?.(null); return ()=>{}; }
+  const ref=doc(db,'daily_metrics',day);
+  return onSnapshot(
+    ref,
+    (snap)=> onData(snap.exists()? { id:snap.id, ...snap.data() } : null),
+    (err)=> onError?.(err)
+  );
+}
+function flattenDashboardBuckets(snap,day){
+  const out=[];
+  snap.docs.forEach((d)=>{
+    const row=d.data()||{};
+    const items=row.items||{};
+    Object.values(items).forEach((item)=>{
+      if(!item || typeof item!=='object') return;
+      const normalized={ ...item };
+      if(!normalized.fecha) normalized.fecha=day;
+      out.push(normalized);
+    });
+  });
+  return out;
+}
+export function streamDashboardAttendanceByDate(fecha,onData,onError){
+  const day=String(fecha||'').trim();
+  if(!day){ onData?.([]); return ()=>{}; }
+  const ref=collection(db,DASHBOARD_DOCS_COL,day,'attendance_buckets');
+  return onSnapshot(
+    ref,
+    (snap)=> onData(flattenDashboardBuckets(snap,day)),
+    (err)=> onError?.(err)
+  );
+}
+export function streamDashboardReplacementsByDate(fecha,onData,onError){
+  const day=String(fecha||'').trim();
+  if(!day){ onData?.([]); return ()=>{}; }
+  const ref=collection(db,DASHBOARD_DOCS_COL,day,'replacement_buckets');
+  return onSnapshot(
+    ref,
+    (snap)=> onData(flattenDashboardBuckets(snap,day)),
+    (err)=> onError?.(err)
+  );
+}
 export async function listSedeStatusRange(dateFrom,dateTo){
   if(!dateFrom || !dateTo) return [];
   const ref=collection(db,SEDE_STATUS_COL);
@@ -718,6 +1179,40 @@ export async function listImportReplacementsRange(dateFrom,dateTo){
   const qy=query(ref, where('fecha','>=',dateFrom), where('fecha','<=',dateTo), orderBy('fecha','asc'));
   const snap=await getDocs(qy);
   return snap.docs.map((d)=>({ id:d.id, ...d.data() }));
+}
+export async function listDailyMetricsRange(dateFrom,dateTo){
+  if(!dateFrom || !dateTo) return [];
+  const ref=collection(db,'daily_metrics');
+  const inRange=(day)=> day>=dateFrom && day<=dateTo;
+  const rowsByDay=new Map();
+
+  // Documents with explicit fecha field.
+  try{
+    const qy=query(ref, where('fecha','>=',dateFrom), where('fecha','<=',dateTo), orderBy('fecha','asc'));
+    const snap=await getDocs(qy);
+    snap.docs.forEach((d)=>{
+      const row={ id:d.id, ...d.data() };
+      const day=String(row.fecha||row.id||'').trim();
+      if(/^\d{4}-\d{2}-\d{2}$/.test(day) && inRange(day)) rowsByDay.set(day,row);
+    });
+  }catch{}
+
+  // Backward compatibility: docs keyed by YYYY-MM-DD without `fecha`.
+  try{
+    const qyById=query(ref, where(documentId(),'>=',dateFrom), where(documentId(),'<=',dateTo), orderBy(documentId(),'asc'));
+    const snapById=await getDocs(qyById);
+    snapById.docs.forEach((d)=>{
+      const row={ id:d.id, ...d.data() };
+      const day=String(row.fecha||row.id||'').trim();
+      if(/^\d{4}-\d{2}-\d{2}$/.test(day) && inRange(day)) rowsByDay.set(day,row);
+    });
+  }catch{}
+
+  return Array.from(rowsByDay.values()).sort((a,b)=>{
+    const da=String(a.fecha||a.id||'');
+    const dbb=String(b.fecha||b.id||'');
+    return da.localeCompare(dbb);
+  });
 }
 
 export async function closeOperationDayManual(fecha){
@@ -887,11 +1382,62 @@ export async function isOperationDayClosed(fecha){
 export async function listClosedOperationDaysRange(dateFrom,dateTo){
   if(!dateFrom || !dateTo) return [];
   const ref=collection(db,'daily_closures');
-  const qy=query(ref, where('fecha','>=',dateFrom), where('fecha','<=',dateTo), orderBy('fecha','asc'));
-  const snap=await getDocs(qy);
-  return snap.docs
-    .map((d)=> ({ id:d.id, ...d.data() }))
-    .filter((r)=> r.locked===true || String(r.status||'').trim()==='closed')
-    .map((r)=> String(r.fecha||'').trim())
-    .filter(Boolean);
+  const toDay=(row={})=>{ const raw=String(row.fecha||row.id||'').trim(); return /^\d{4}-\d{2}-\d{2}$/.test(raw)? raw : ''; };
+  const inRange=(day)=> day>=dateFrom && day<=dateTo;
+  const isClosed=(row={})=> row.locked===true || String(row.status||'').trim()==='closed';
+  const byDay=new Set();
+  try{
+    const qy=query(ref, where('fecha','>=',dateFrom), where('fecha','<=',dateTo), orderBy('fecha','asc'));
+    const snap=await getDocs(qy);
+    snap.docs.forEach((d)=>{
+      const row={ id:d.id, ...d.data() };
+      if(!isClosed(row)) return;
+      const day=toDay(row);
+      if(day && inRange(day)) byDay.add(day);
+    });
+  }catch{}
+
+  // Backward compatibility: docs keyed by YYYY-MM-DD without `fecha`.
+  try{
+    const qyById=query(ref, where(documentId(),'>=',dateFrom), where(documentId(),'<=',dateTo), orderBy(documentId(),'asc'));
+    const snapById=await getDocs(qyById);
+    snapById.docs.forEach((d)=>{
+      const row={ id:d.id, ...d.data() };
+      if(!isClosed(row)) return;
+      const day=toDay(row);
+      if(day && inRange(day)) byDay.add(day);
+    });
+  }catch{}
+
+  return Array.from(byDay).sort();
+}
+
+export async function listDailyClosuresRange(dateFrom,dateTo){
+  if(!dateFrom || !dateTo) return [];
+  const ref=collection(db,'daily_closures');
+  const inRange=(day)=> day>=dateFrom && day<=dateTo;
+  const toDay=(row={})=>{ const raw=String(row.fecha||row.id||'').trim(); return /^\d{4}-\d{2}-\d{2}$/.test(raw)? raw : ''; };
+  const isClosed=(row={})=> row.locked===true || String(row.status||'').trim()==='closed';
+  const byDay=new Map();
+
+  const mergeRow=(row={})=>{
+    if(!isClosed(row)) return;
+    const day=toDay(row);
+    if(!day || !inRange(day)) return;
+    byDay.set(day,{ ...row, fecha: day });
+  };
+
+  try{
+    const qy=query(ref, where('fecha','>=',dateFrom), where('fecha','<=',dateTo), orderBy('fecha','asc'));
+    const snap=await getDocs(qy);
+    snap.docs.forEach((d)=> mergeRow({ id:d.id, ...d.data() }));
+  }catch{}
+
+  try{
+    const qyById=query(ref, where(documentId(),'>=',dateFrom), where(documentId(),'<=',dateTo), orderBy(documentId(),'asc'));
+    const snapById=await getDocs(qyById);
+    snapById.docs.forEach((d)=> mergeRow({ id:d.id, ...d.data() }));
+  }catch{}
+
+  return Array.from(byDay.values()).sort((a,b)=> String(a.fecha||a.id||'').localeCompare(String(b.fecha||b.id||'')));
 }

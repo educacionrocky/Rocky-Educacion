@@ -1,5 +1,5 @@
 ﻿const { onRequest } = require('firebase-functions/v2/https');
-const { onDocumentCreated } = require('firebase-functions/v2/firestore');
+const { onDocumentCreated, onDocumentWritten } = require('firebase-functions/v2/firestore');
 const { onSchedule } = require('firebase-functions/v2/scheduler');
 const logger = require('firebase-functions/logger');
 const admin = require('firebase-admin');
@@ -16,6 +16,77 @@ const WHATSAPP_GRAPH_VERSION = String(process.env.WHATSAPP_GRAPH_VERSION || 'v25
 const WHATSAPP_APP_SECRET = String(process.env.WHATSAPP_APP_SECRET || '').trim();
 const DAILY_CLOSURES_COL = 'daily_closures';
 const DAILY_SNAPSHOTS_COL = 'daily_closure_snapshots';
+const DAILY_METRICS_COL = 'daily_metrics';
+const DASHBOARD_DOCS_COL = 'dashboard_docs';
+const DASHBOARD_BUCKETS_ATTENDANCE_COL = 'attendance_buckets';
+const DASHBOARD_BUCKETS_REPLACEMENTS_COL = 'replacement_buckets';
+const DASHBOARD_BUCKET_COUNT = 32;
+const OPERATION_CACHE_TTL_MS = 5 * 1000;
+const LOOKUP_CACHE_TTL_MS = 10 * 60 * 1000;
+const SEDES_LOOKUP_CACHE_TTL_MS = 10 * 60 * 1000;
+const METRICS_REFRESH_DEBOUNCE_MS = 2 * 60 * 1000;
+const operationCache = {
+  sedesRows: null,
+  employeesRows: null,
+  novedadesRows: null,
+  supernumerariosActivosRows: null
+};
+const lookupCache = {
+  employeeByPhone: new Map(),
+  employeeByDocument: new Map(),
+  employeeById: new Map(),
+  superByDocument: new Map(),
+  novedadByCode: new Map()
+};
+const metricsRefreshByDay = new Map();
+
+function isCacheValid(entry, ttlMs = OPERATION_CACHE_TTL_MS) {
+  if (!entry || !Array.isArray(entry.rows)) return false;
+  return Date.now() - Number(entry.ts || 0) <= ttlMs;
+}
+
+async function getCachedRows(cacheKey, loader, ttlMs = OPERATION_CACHE_TTL_MS) {
+  const current = operationCache[cacheKey];
+  if (isCacheValid(current, ttlMs)) return current.rows;
+  const rows = await loader();
+  const safeRows = Array.isArray(rows) ? rows : [];
+  operationCache[cacheKey] = { ts: Date.now(), rows: safeRows };
+  return safeRows;
+}
+
+function getLookupCached(map, key, ttlMs = LOOKUP_CACHE_TTL_MS) {
+  const item = map.get(key);
+  if (!item) return { hit: false, value: null };
+  if (Date.now() - Number(item.ts || 0) > ttlMs) {
+    map.delete(key);
+    return { hit: false, value: null };
+  }
+  return { hit: true, value: item.value ?? null };
+}
+
+function setLookupCached(map, key, value) {
+  map.set(key, { ts: Date.now(), value: value ?? null });
+}
+
+function clearEmployeeLookupCaches() {
+  lookupCache.employeeByPhone.clear();
+  lookupCache.employeeByDocument.clear();
+  lookupCache.employeeById.clear();
+  lookupCache.superByDocument.clear();
+}
+
+function shouldRefreshMetricsFromWrite(day) {
+  const now = Date.now();
+  const nextAllowed = Number(metricsRefreshByDay.get(day) || 0);
+  if (nextAllowed > now) return false;
+  metricsRefreshByDay.set(day, now + METRICS_REFRESH_DEBOUNCE_MS);
+  if (metricsRefreshByDay.size > 128) {
+    for (const [k, v] of metricsRefreshByDay.entries()) {
+      if (Number(v || 0) <= now) metricsRefreshByDay.delete(k);
+    }
+  }
+  return true;
+}
 
 exports.sendContactEmail = onRequest(
   {
@@ -231,6 +302,49 @@ exports.processWhatsAppIncoming = onDocumentCreated(
   }
 );
 
+exports.updateDailyMetricsOnAttendanceWrite = onDocumentWritten(
+  {
+    region: 'us-central1',
+    document: 'attendance/{docId}'
+  },
+  async (event) => {
+    // Keep dashboard docs near-real-time; metrics can take longer.
+    await syncDashboardDocsOnWriteEvent(event, { kind: 'attendance' });
+    const days = extractDaysFromWriteEvent(event);
+    for (const day of days) {
+      if (!shouldRefreshMetricsFromWrite(day)) continue;
+      await refreshDailyMetricsForDate(day, { source: 'attendance_write_debounced' });
+    }
+  }
+);
+
+exports.updateDailyMetricsOnReplacementsWrite = onDocumentWritten(
+  {
+    region: 'us-central1',
+    document: 'import_replacements/{docId}'
+  },
+  async (event) => {
+    // Keep dashboard docs near-real-time; metrics can take longer.
+    await syncDashboardDocsOnWriteEvent(event, { kind: 'replacement' });
+    const days = extractDaysFromWriteEvent(event);
+    for (const day of days) {
+      if (!shouldRefreshMetricsFromWrite(day)) continue;
+      await refreshDailyMetricsForDate(day, { source: 'replacements_write_debounced' });
+    }
+  }
+);
+
+exports.refreshTodayDailyMetrics = onSchedule(
+  {
+    region: 'us-central1',
+    schedule: '*/10 * * * *',
+    timeZone: 'America/Bogota'
+  },
+  async () => {
+    await refreshDailyMetricsForDate(todayInBogota(), { source: 'metrics_scheduler' });
+  }
+);
+
 exports.finalizeDailyAbsenteeism = onSchedule(
   {
     region: 'us-central1',
@@ -246,6 +360,7 @@ exports.finalizeDailyAbsenteeism = onSchedule(
     await ensureAutoAttendanceWithNovedad8(day);
     await ensureAusentismoAssignmentsForDate(day);
     await rebuildSedeStatusForDate(day, { force: true });
+    await refreshDailyMetricsForDate(day, { source: 'finalize_daily_absenteeism' });
     const snapshotStats = await snapshotDailyState(day);
     const summary = await computeOperationClosureSummary(day);
     await markDayClosed(day, {
@@ -307,6 +422,7 @@ exports.closeOperationDay = onRequest(
         await ensureAutoAttendanceWithNovedad8(day);
         await ensureAusentismoAssignmentsForDate(day);
         await rebuildSedeStatusForDate(day, { force: true });
+        await refreshDailyMetricsForDate(day, { source: 'close_operation_day' });
         const snapshotStats = await snapshotDailyState(day);
         const summary = await computeOperationClosureSummary(day);
         await markDayClosed(day, {
@@ -557,13 +673,13 @@ async function processIncomingMessage(docRef, data) {
   }
 
   if (session.stage === 'awaiting_daily_option' && session.employeeId) {
-    const empDoc = await admin.firestore().collection('employees').doc(String(session.employeeId)).get();
-    if (!empDoc.exists) {
+    const empEntry = await findEmployeeByIdCached(String(session.employeeId));
+    if (!empEntry) {
       await sendWhatsAppText(fromDigits, 'No fue posible encontrar tu registro de empleado. Por favor contacta a administracion.', row.phoneNumberId);
       await setIncomingProcess(docRef, 'error', 'employee_not_found_in_session');
       return;
     }
-    if (!isEmployeeEligibleForRegistration(empDoc.data() || {}, todayInBogota())) {
+    if (!isEmployeeEligibleForRegistration(empEntry.data || {}, todayInBogota())) {
       await sendWhatsAppText(
         fromDigits,
         'Tu registro no esta habilitado para hoy por estado o fecha de retiro. Por favor contacta a administracion.',
@@ -642,13 +758,13 @@ async function processIncomingMessage(docRef, data) {
   }
 
   if (session.stage === 'awaiting_super_main_option' && session.employeeId) {
-    const empDoc = await admin.firestore().collection('employees').doc(String(session.employeeId)).get();
-    if (!empDoc.exists) {
+    const empEntry = await findEmployeeByIdCached(String(session.employeeId));
+    if (!empEntry) {
       await sendWhatsAppText(fromDigits, 'No fue posible encontrar tu registro de empleado. Por favor contacta a administracion.', row.phoneNumberId);
       await setIncomingProcess(docRef, 'error', 'employee_not_found_in_super_main');
       return;
     }
-    if (!isEmployeeEligibleForRegistration(empDoc.data() || {}, todayInBogota())) {
+    if (!isEmployeeEligibleForRegistration(empEntry.data || {}, todayInBogota())) {
       await sendWhatsAppText(
         fromDigits,
         'Tu registro no esta habilitado para hoy por estado o fecha de retiro. Por favor contacta a administracion.',
@@ -757,6 +873,7 @@ async function processIncomingMessage(docRef, data) {
         },
         { merge: true }
       );
+    clearEmployeeLookupCaches();
 
     await sendWhatsAppText(
       fromDigits,
@@ -783,13 +900,13 @@ async function processIncomingMessage(docRef, data) {
   }
 
   if (session.stage === 'awaiting_super_sede_search' && session.employeeId) {
-    const empDoc = await admin.firestore().collection('employees').doc(String(session.employeeId)).get();
-    if (!empDoc.exists) {
+    const empEntry = await findEmployeeByIdCached(String(session.employeeId));
+    if (!empEntry) {
       await sendWhatsAppText(fromDigits, 'No fue posible encontrar tu registro de empleado. Por favor contacta a administracion.', row.phoneNumberId);
       await setIncomingProcess(docRef, 'error', 'employee_not_found_in_super_sede');
       return;
     }
-    if (!isEmployeeEligibleForRegistration(empDoc.data() || {}, todayInBogota())) {
+    if (!isEmployeeEligibleForRegistration(empEntry.data || {}, todayInBogota())) {
       await sendWhatsAppText(
         fromDigits,
         'Tu registro no esta habilitado para hoy por estado o fecha de retiro. Por favor contacta a administracion.',
@@ -841,13 +958,13 @@ async function processIncomingMessage(docRef, data) {
   }
 
   if (session.stage === 'awaiting_super_sede_pick' && session.employeeId) {
-    const empDoc = await admin.firestore().collection('employees').doc(String(session.employeeId)).get();
-    if (!empDoc.exists) {
+    const empEntry = await findEmployeeByIdCached(String(session.employeeId));
+    if (!empEntry) {
       await sendWhatsAppText(fromDigits, 'No fue posible encontrar tu registro de empleado. Por favor contacta a administracion.', row.phoneNumberId);
       await setIncomingProcess(docRef, 'error', 'employee_not_found_in_super_sede_pick');
       return;
     }
-    if (!isEmployeeEligibleForRegistration(empDoc.data() || {}, todayInBogota())) {
+    if (!isEmployeeEligibleForRegistration(empEntry.data || {}, todayInBogota())) {
       await sendWhatsAppText(
         fromDigits,
         'Tu registro no esta habilitado para hoy por estado o fecha de retiro. Por favor contacta a administracion.',
@@ -891,13 +1008,13 @@ async function processIncomingMessage(docRef, data) {
   }
 
   if (session.stage === 'awaiting_traslado_search' && session.employeeId) {
-    const empDoc = await admin.firestore().collection('employees').doc(String(session.employeeId)).get();
-    if (!empDoc.exists) {
+    const empEntry = await findEmployeeByIdCached(String(session.employeeId));
+    if (!empEntry) {
       await sendWhatsAppText(fromDigits, 'No fue posible encontrar tu registro de empleado. Por favor contacta a administracion.', row.phoneNumberId);
       await setIncomingProcess(docRef, 'error', 'employee_not_found_in_traslado');
       return;
     }
-    if (!isEmployeeEligibleForRegistration(empDoc.data() || {}, todayInBogota())) {
+    if (!isEmployeeEligibleForRegistration(empEntry.data || {}, todayInBogota())) {
       await sendWhatsAppText(
         fromDigits,
         'Tu registro no esta habilitado para hoy por estado o fecha de retiro. Por favor contacta a administracion.',
@@ -949,13 +1066,13 @@ async function processIncomingMessage(docRef, data) {
   }
 
   if (session.stage === 'awaiting_traslado_pick' && session.employeeId) {
-    const empDoc = await admin.firestore().collection('employees').doc(String(session.employeeId)).get();
-    if (!empDoc.exists) {
+    const empEntry = await findEmployeeByIdCached(String(session.employeeId));
+    if (!empEntry) {
       await sendWhatsAppText(fromDigits, 'No fue posible encontrar tu registro de empleado. Por favor contacta a administracion.', row.phoneNumberId);
       await setIncomingProcess(docRef, 'error', 'employee_not_found_in_traslado_pick');
       return;
     }
-    if (!isEmployeeEligibleForRegistration(empDoc.data() || {}, todayInBogota())) {
+    if (!isEmployeeEligibleForRegistration(empEntry.data || {}, todayInBogota())) {
       await sendWhatsAppText(
         fromDigits,
         'Tu registro no esta habilitado para hoy por estado o fecha de retiro. Por favor contacta a administracion.',
@@ -983,6 +1100,7 @@ async function processIncomingMessage(docRef, data) {
         },
         { merge: true }
       );
+    clearEmployeeLookupCaches();
 
     await sendWhatsAppText(
       fromDigits,
@@ -1089,19 +1207,24 @@ async function processIncomingMessage(docRef, data) {
     return;
   }
 
-  const employeesRef = admin.firestore().collection('employees');
-  const empSnap = await employeesRef.where('documento', '==', parsed.documento).limit(1).get();
-  if (empSnap.empty) {
+  const empEntry = await findEmployeeByDocument(parsed.documento);
+  if (!empEntry) {
     await setIncomingProcess(docRef, 'error', 'employee_not_found', { parsed });
     return;
   }
 
-  const saved = await registerAttendanceFromEmployeeDoc(empSnap.docs[0], {
-    asistio: parsed.asistio,
-    novedad: parsed.novedad || null,
-    fecha: parsed.fecha || todayInBogota(),
-    messageId: row.messageId || docRef.id
-  });
+  const saved = await registerAttendanceFromEmployeeDoc(
+    {
+      id: empEntry.id,
+      data: () => empEntry.data || {}
+    },
+    {
+      asistio: parsed.asistio,
+      novedad: parsed.novedad || null,
+      fecha: parsed.fecha || todayInBogota(),
+      messageId: row.messageId || docRef.id
+    }
+  );
   await setIncomingProcess(docRef, 'processed', 'attendance_registered_direct', {
     attendanceId: saved.attendanceId,
     parsed: {
@@ -1123,8 +1246,8 @@ async function prepareNovedadFlow({
   novedadType,
   incapacidadDays = null
 }) {
-  const empDoc = await admin.firestore().collection('employees').doc(String(empId)).get();
-  if (!empDoc.exists) {
+  const empEntry = await findEmployeeByIdCached(String(empId));
+  if (!empEntry) {
     await sendWhatsAppText(fromDigits, 'No fue posible encontrar tu registro de empleado. Por favor contacta a administracion.', row.phoneNumberId);
     await setIncomingProcess(docRef, 'error', 'employee_not_found_in_novedad_flow');
     return true;
@@ -1138,7 +1261,7 @@ async function prepareNovedadFlow({
   };
   const novCode = noveltyMap[String(novedadType || '').trim()] || null;
   const novelty = await resolveNovedadByCode(novCode);
-  const emp = empDoc.data() || {};
+  const emp = empEntry.data || {};
   const superByDoc = await findActiveSupernumerarioByDocument(String(emp.documento || '').trim());
   const isSupernumerario = Boolean(superByDoc);
   const novedadLabel =
@@ -1179,14 +1302,13 @@ async function finalizeAttendanceNow({
   processExtra = {},
   lastDecision = null
 }) {
-  const empRef = admin.firestore().collection('employees').doc(String(employeeId || ''));
-  const empDoc = await empRef.get();
-  if (!empDoc.exists) {
+  const empEntry = await findEmployeeByIdCached(String(employeeId || ''));
+  if (!empEntry) {
     await sendWhatsAppText(fromDigits, 'No fue posible encontrar tu registro de empleado. Por favor contacta a administracion.', row.phoneNumberId);
     await setIncomingProcess(docRef, 'error', 'employee_not_found_in_finalize');
     return null;
   }
-  if (!isEmployeeEligibleForRegistration(empDoc.data() || {}, todayInBogota())) {
+  if (!isEmployeeEligibleForRegistration(empEntry.data || {}, todayInBogota())) {
     await sendWhatsAppText(
       fromDigits,
       'Tu registro no esta habilitado para hoy por estado o fecha de retiro. Por favor contacta a administracion.',
@@ -1198,11 +1320,17 @@ async function finalizeAttendanceNow({
 
   let saved = null;
   try {
-    saved = await registerAttendanceFromEmployeeDoc(empDoc, {
-      ...(pendingAttendance || {}),
-      messageId: pendingAttendance?.messageId || row.messageId || docRef.id,
-      phone: normalizePhoneForStorage(fromDigits)
-    });
+    saved = await registerAttendanceFromEmployeeDoc(
+      {
+        id: empEntry.id,
+        data: () => empEntry.data || {}
+      },
+      {
+        ...(pendingAttendance || {}),
+        messageId: pendingAttendance?.messageId || row.messageId || docRef.id,
+        phone: normalizePhoneForStorage(fromDigits)
+      }
+    );
   } catch (err) {
     const code = String(err?.message || '');
     if (code === 'day_closed') {
@@ -1338,39 +1466,65 @@ function isValidColombiaPhone(phone) {
 async function resolveNovedadByCode(code) {
   const desired = String(code || '').trim();
   if (!desired) return { codigo: null, nombre: 'SIN NOVEDAD' };
+  const cached = getLookupCached(lookupCache.novedadByCode, desired);
+  if (cached.hit && cached.value) return cached.value;
   const ref = admin.firestore().collection('novedades');
   const byCodigoNovedad = await ref.where('codigoNovedad', '==', desired).limit(1).get();
   if (!byCodigoNovedad.empty) {
     const row = byCodigoNovedad.docs[0].data() || {};
-    return {
+    const out = {
       codigo: String(row.codigoNovedad || desired).trim() || desired,
       nombre: String(row.nombre || `NOVEDAD ${desired}`).trim() || `NOVEDAD ${desired}`
     };
+    setLookupCached(lookupCache.novedadByCode, desired, out);
+    return out;
   }
   const byCodigo = await ref.where('codigo', '==', desired).limit(1).get();
   if (!byCodigo.empty) {
     const row = byCodigo.docs[0].data() || {};
-    return {
+    const out = {
       codigo: String(row.codigoNovedad || row.codigo || desired).trim() || desired,
       nombre: String(row.nombre || `NOVEDAD ${desired}`).trim() || `NOVEDAD ${desired}`
     };
+    setLookupCached(lookupCache.novedadByCode, desired, out);
+    return out;
   }
-  return { codigo: desired, nombre: `NOVEDAD ${desired}` };
+  const out = { codigo: desired, nombre: `NOVEDAD ${desired}` };
+  setLookupCached(lookupCache.novedadByCode, desired, out);
+  return out;
 }
 
 async function findSedeCandidatesByName(text, max = 10) {
   const normNeedle = normalizeUserText(text);
   if (!normNeedle) return [];
-  const snap = await admin.firestore().collection('sedes').limit(500).get();
+  const exactCode = String(text || '').trim().toUpperCase();
+  if (exactCode) {
+    try {
+      const exact = await admin.firestore().collection('sedes').where('codigo', '==', exactCode).limit(1).get();
+      if (!exact.empty) {
+        const d = exact.docs[0];
+        const row = d.data() || {};
+        return [{ id: d.id, codigo: String(row.codigo || '').trim() || null, nombre: String(row.nombre || '').trim() || null }];
+      }
+    } catch {}
+  }
+  const sedesRows = await getCachedRows(
+    'sedesRows',
+    async () => {
+      const snap = await admin.firestore().collection('sedes').get();
+      return snap.docs.map((d) => ({ id: d.id, ...(d.data() || {}) }));
+    },
+    SEDES_LOOKUP_CACHE_TTL_MS
+  );
   const rows = [];
-  for (const d of snap.docs) {
-    const row = d.data() || {};
+  for (const item of sedesRows) {
+    const row = item || {};
     const codigo = String(row.codigo || '').trim();
     const nombre = String(row.nombre || '').trim();
     if (!codigo && !nombre) continue;
     const blob = `${normalizeUserText(nombre)} ${normalizeUserText(codigo)}`;
     if (!blob.includes(normNeedle)) continue;
-    rows.push({ id: d.id, codigo: codigo || null, nombre: nombre || codigo || null });
+    rows.push({ id: row.id, codigo: codigo || null, nombre: nombre || codigo || null });
   }
   rows.sort((a, b) => String(a.nombre || '').localeCompare(String(b.nombre || '')));
   return rows.slice(0, max);
@@ -1382,6 +1536,14 @@ async function resolveSelectedSede(rawText, storedCandidates = []) {
   if (txt.startsWith('sede_pick_')) {
     const sedeId = txt.replace('sede_pick_', '').trim();
     if (!sedeId) return null;
+    const local = (Array.isArray(storedCandidates) ? storedCandidates : []).find((c) => String(c.id || '').trim() === sedeId);
+    if (local) {
+      return {
+        id: sedeId,
+        codigo: String(local.codigo || '').trim() || null,
+        nombre: String(local.nombre || '').trim() || null
+      };
+    }
     const snap = await admin.firestore().collection('sedes').doc(sedeId).get();
     if (!snap.exists) return null;
     const row = snap.data() || {};
@@ -1393,13 +1555,10 @@ async function resolveSelectedSede(rawText, storedCandidates = []) {
   }
   const opt = (Array.isArray(storedCandidates) ? storedCandidates : []).find((c) => String(c.index || '').trim() === txt);
   if (!opt) return null;
-  const snap = await admin.firestore().collection('sedes').doc(String(opt.id || '')).get();
-  if (!snap.exists) return null;
-  const row = snap.data() || {};
   return {
-    id: snap.id,
-    codigo: String(row.codigo || '').trim() || null,
-    nombre: String(row.nombre || '').trim() || null
+    id: String(opt.id || '').trim() || null,
+    codigo: String(opt.codigo || '').trim() || null,
+    nombre: String(opt.nombre || '').trim() || null
   };
 }
 
@@ -1622,24 +1781,62 @@ function phoneCandidates(phoneDigits) {
 async function findEmployeeByPhone(phoneDigits) {
   const candidates = phoneCandidates(phoneDigits);
   if (!candidates.length) return null;
+  const cacheKey = candidates.join('|');
+  const cached = getLookupCached(lookupCache.employeeByPhone, cacheKey);
+  if (cached.hit) return cached.value;
   const snap = await admin.firestore().collection('employees').where('telefono', 'in', candidates).limit(1).get();
-  if (snap.empty) return null;
+  if (snap.empty) {
+    setLookupCached(lookupCache.employeeByPhone, cacheKey, null);
+    return null;
+  }
   const doc = snap.docs[0];
-  return { id: doc.id, data: doc.data() || {} };
+  const out = { id: doc.id, data: doc.data() || {} };
+  setLookupCached(lookupCache.employeeByPhone, cacheKey, out);
+  setLookupCached(lookupCache.employeeById, String(doc.id).trim(), out);
+  const docNum = digitsOnly(out?.data?.documento);
+  if (docNum) setLookupCached(lookupCache.employeeByDocument, docNum, out);
+  return out;
 }
 
 async function findEmployeeByDocument(documento) {
   const docNum = digitsOnly(documento);
   if (!docNum) return null;
+  const cached = getLookupCached(lookupCache.employeeByDocument, docNum);
+  if (cached.hit) return cached.value;
   const snap = await admin.firestore().collection('employees').where('documento', '==', docNum).limit(1).get();
-  if (snap.empty) return null;
+  if (snap.empty) {
+    setLookupCached(lookupCache.employeeByDocument, docNum, null);
+    return null;
+  }
   const doc = snap.docs[0];
-  return { id: doc.id, data: doc.data() || {} };
+  const out = { id: doc.id, data: doc.data() || {} };
+  setLookupCached(lookupCache.employeeByDocument, docNum, out);
+  setLookupCached(lookupCache.employeeById, String(doc.id).trim(), out);
+  return out;
+}
+
+async function findEmployeeByIdCached(employeeId) {
+  const id = String(employeeId || '').trim();
+  if (!id) return null;
+  const cached = getLookupCached(lookupCache.employeeById, id);
+  if (cached.hit) return cached.value;
+  const snap = await admin.firestore().collection('employees').doc(id).get();
+  if (!snap.exists) {
+    setLookupCached(lookupCache.employeeById, id, null);
+    return null;
+  }
+  const out = { id: snap.id, data: snap.data() || {} };
+  setLookupCached(lookupCache.employeeById, id, out);
+  const docNum = digitsOnly(out?.data?.documento);
+  if (docNum) setLookupCached(lookupCache.employeeByDocument, docNum, out);
+  return out;
 }
 
 async function findActiveSupernumerarioByDocument(documento) {
   const docNum = digitsOnly(documento);
   if (!docNum) return null;
+  const cached = getLookupCached(lookupCache.superByDocument, docNum);
+  if (cached.hit) return cached.value;
   const snap = await admin
     .firestore()
     .collection('supernumerarios')
@@ -1647,11 +1844,19 @@ async function findActiveSupernumerarioByDocument(documento) {
     .where('estado', '==', 'activo')
     .limit(1)
     .get();
-  if (snap.empty) return null;
+  if (snap.empty) {
+    setLookupCached(lookupCache.superByDocument, docNum, null);
+    return null;
+  }
   const doc = snap.docs[0];
   const data = doc.data() || {};
-  if (!isEmployeeEligibleForRegistration(data, todayInBogota())) return null;
-  return { id: doc.id, data };
+  if (!isEmployeeEligibleForRegistration(data, todayInBogota())) {
+    setLookupCached(lookupCache.superByDocument, docNum, null);
+    return null;
+  }
+  const out = { id: doc.id, data };
+  setLookupCached(lookupCache.superByDocument, docNum, out);
+  return out;
 }
 
 async function registerAttendanceFromEmployeeDoc(empDoc, opts = {}) {
@@ -1737,19 +1942,27 @@ async function rebuildSedeStatusForDate(fecha, opts = {}) {
   if (!opts?.force && (await isDayClosed(day))) return;
 
   const db = admin.firestore();
-  const [sedesSnap, employeesSnap, attendanceSnap, replacementsSnap, currentStatusSnap, novedadesSnap] = await Promise.all([
-    db.collection('sedes').get(),
-    db.collection('employees').get(),
+  const [sedesRows, employeesRows, attendanceSnap, replacementsSnap, currentStatusSnap, novedadesRows] = await Promise.all([
+    getCachedRows('sedesRows', async () => {
+      const snap = await db.collection('sedes').get();
+      return snap.docs.map((d) => d.data() || {});
+    }),
+    getCachedRows('employeesRows', async () => {
+      const snap = await db.collection('employees').get();
+      return snap.docs.map((d) => d.data() || {});
+    }),
     db.collection('attendance').where('fecha', '==', day).get(),
     db.collection('import_replacements').where('fecha', '==', day).get(),
     db.collection('sede_status').where('fecha', '==', day).get(),
-    db.collection('novedades').get()
+    getCachedRows('novedadesRows', async () => {
+      const snap = await db.collection('novedades').get();
+      return snap.docs.map((d) => d.data() || {});
+    })
   ]);
 
   const sedeNameByCode = new Map();
   const plannedBySede = new Map();
-  for (const s of sedesSnap.docs) {
-    const row = s.data() || {};
+  for (const row of sedesRows) {
     const code = String(row.codigo || '').trim();
     if (!code) continue;
     sedeNameByCode.set(code, String(row.nombre || '').trim() || code);
@@ -1758,8 +1971,7 @@ async function rebuildSedeStatusForDate(fecha, opts = {}) {
   }
 
   const contractedBySede = new Map();
-  for (const d of employeesSnap.docs) {
-    const emp = d.data() || {};
+  for (const emp of employeesRows) {
     const sedeCodigo = String(emp.sedeCodigo || '').trim();
     if (!sedeCodigo) continue;
     if (!isEmployeeEligibleForRegistration(emp, day)) continue;
@@ -1769,7 +1981,7 @@ async function rebuildSedeStatusForDate(fecha, opts = {}) {
   const registeredBySede = new Map();
   const novedadSinReemplazoBySede = new Map();
   const replacedAttendanceKey = new Set();
-  const novedadRules = buildNovedadReplacementRules(novedadesSnap.docs.map((d) => d.data() || {}));
+  const novedadRules = buildNovedadReplacementRules(novedadesRows);
 
   for (const d of replacementsSnap.docs) {
     const repl = d.data() || {};
@@ -1866,26 +2078,36 @@ async function computeOperationClosureSummary(fecha) {
     };
   }
 
-  const [sedesSnap, employeesSnap, attendanceSnap, replacementsSnap, novedadesSnap, superSnap] = await Promise.all([
-    db.collection('sedes').get(),
-    db.collection('employees').get(),
+  const [sedesRows, employeesRows, attendanceSnap, replacementsSnap, novedadesRows, superRows] = await Promise.all([
+    getCachedRows('sedesRows', async () => {
+      const snap = await db.collection('sedes').get();
+      return snap.docs.map((d) => d.data() || {});
+    }),
+    getCachedRows('employeesRows', async () => {
+      const snap = await db.collection('employees').get();
+      return snap.docs.map((d) => d.data() || {});
+    }),
     db.collection('attendance').where('fecha', '==', day).get(),
     db.collection('import_replacements').where('fecha', '==', day).get(),
-    db.collection('novedades').get(),
-    db.collection('supernumerarios').where('estado', '==', 'activo').get()
+    getCachedRows('novedadesRows', async () => {
+      const snap = await db.collection('novedades').get();
+      return snap.docs.map((d) => d.data() || {});
+    }),
+    getCachedRows('supernumerariosActivosRows', async () => {
+      const snap = await db.collection('supernumerarios').where('estado', '==', 'activo').get();
+      return snap.docs.map((d) => d.data() || {});
+    })
   ]);
 
-  const planeados = sedesSnap.docs.reduce((acc, d) => acc + (Number(d.data()?.numeroOperarios || 0) || 0), 0);
+  const planeados = sedesRows.reduce((acc, row) => acc + (Number(row?.numeroOperarios || 0) || 0), 0);
   const superDocs = new Set(
-    superSnap.docs
-      .map((d) => d.data() || {})
+    superRows
       .filter((row) => isEmployeeActiveOnDate(row, day))
       .map((row) => String(row.documento || '').trim())
       .filter(Boolean)
   );
   let contratados = 0;
-  for (const d of employeesSnap.docs) {
-    const emp = d.data() || {};
+  for (const emp of employeesRows) {
     if (!isEmployeeEligibleForRegistration(emp, day)) continue;
     const docNum = String(emp.documento || '').trim();
     if (docNum && superDocs.has(docNum)) continue;
@@ -1900,7 +2122,7 @@ async function computeOperationClosureSummary(fecha) {
     if (!empId) continue;
     replacedAttendanceKey.add(`${day}_${empId}`);
   }
-  const novedadRules = buildNovedadReplacementRules(novedadesSnap.docs.map((d) => d.data() || {}));
+  const novedadRules = buildNovedadReplacementRules(novedadesRows);
   let ausentismos = 0;
   for (const d of attendanceSnap.docs) {
     const row = d.data() || {};
@@ -2172,6 +2394,289 @@ async function ensureAusentismoAssignmentsForDate(fecha) {
 
   await commitBatch();
   return created;
+}
+
+function extractDayFromWriteEvent(event) {
+  try {
+    const after = event?.data?.after;
+    const before = event?.data?.before;
+    const row = after?.exists ? after.data() || {} : before?.exists ? before.data() || {} : {};
+    const fromField = String(row?.fecha || '').trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(fromField)) return fromField;
+    const docId = String(event?.params?.docId || '').trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(docId)) return docId;
+    if (/^\d{4}-\d{2}-\d{2}_/.test(docId)) return docId.slice(0, 10);
+    return '';
+  } catch {
+    return '';
+  }
+}
+
+function extractDaysFromWriteEvent(event) {
+  const out = new Set();
+  try {
+    const after = event?.data?.after;
+    const before = event?.data?.before;
+    const afterRow = after?.exists ? after.data() || {} : {};
+    const beforeRow = before?.exists ? before.data() || {} : {};
+    const maybe = [
+      String(afterRow?.fecha || '').trim(),
+      String(beforeRow?.fecha || '').trim(),
+      extractDayFromWriteEvent(event)
+    ];
+    for (const day of maybe) {
+      if (/^\d{4}-\d{2}-\d{2}$/.test(day)) out.add(day);
+    }
+  } catch {}
+  return Array.from(out).sort();
+}
+
+function toDashboardItemKey(docId) {
+  const raw = Buffer.from(String(docId || '').trim(), 'utf8').toString('base64');
+  return raw.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+}
+
+function getDashboardBucketId(docId, bucketCount = DASHBOARD_BUCKET_COUNT) {
+  const id = String(docId || '').trim();
+  const digest = crypto.createHash('sha1').update(id).digest();
+  const slot = digest.readUInt32BE(0) % Math.max(1, Number(bucketCount) || DASHBOARD_BUCKET_COUNT);
+  return `b${String(slot).padStart(2, '0')}`;
+}
+
+function toDashboardAttendanceRow(docId, row = {}) {
+  return {
+    id: String(docId || '').trim(),
+    fecha: String(row.fecha || '').trim() || null,
+    empleadoId: row.empleadoId || null,
+    documento: row.documento || null,
+    nombre: row.nombre || null,
+    sedeCodigo: row.sedeCodigo || null,
+    sedeNombre: row.sedeNombre || null,
+    asistio: row.asistio === true,
+    novedad: row.novedad || null,
+    novedadCodigo: row.novedadCodigo || null,
+    novedadNombre: row.novedadNombre || null,
+    incapacidadDias: row.incapacidadDias == null ? null : Number(row.incapacidadDias) || 0,
+    hora: row.hora || null,
+    isSupernumerario: row.isSupernumerario === true
+  };
+}
+
+function toDashboardReplacementRow(docId, row = {}) {
+  return {
+    id: String(docId || '').trim(),
+    fecha: String(row.fecha || '').trim() || null,
+    empleadoId: row.empleadoId || null,
+    documento: row.documento || null,
+    nombre: row.nombre || null,
+    sedeCodigo: row.sedeCodigo || null,
+    sedeNombre: row.sedeNombre || null,
+    novedadCodigo: row.novedadCodigo || null,
+    novedadNombre: row.novedadNombre || null,
+    decision: row.decision || null,
+    supernumerarioId: row.supernumerarioId || null,
+    supernumerarioDocumento: row.supernumerarioDocumento || null,
+    supernumerarioNombre: row.supernumerarioNombre || null
+  };
+}
+
+function dashboardCollectionByKind(kind) {
+  return kind === 'replacement' ? DASHBOARD_BUCKETS_REPLACEMENTS_COL : DASHBOARD_BUCKETS_ATTENDANCE_COL;
+}
+
+function dashboardRootReadyKey(kind) {
+  return kind === 'replacement' ? 'replacementsReady' : 'attendanceReady';
+}
+
+async function touchDashboardRoot(day, { kind, source = 'system' } = {}) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(day || '').trim())) return;
+  const readyKey = dashboardRootReadyKey(kind);
+  const payload = {
+    fecha: day,
+    bucketCount: DASHBOARD_BUCKET_COUNT,
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    source: String(source || '').trim() || 'system'
+  };
+  if (readyKey) payload[readyKey] = true;
+  await admin.firestore().collection(DASHBOARD_DOCS_COL).doc(day).set(payload, { merge: true });
+}
+
+async function upsertDashboardBucketItem(day, { kind, docId, row, source = 'system' } = {}) {
+  const normalizedDay = String(day || '').trim();
+  const id = String(docId || '').trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(normalizedDay) || !id) return;
+  const db = admin.firestore();
+  const bucket = getDashboardBucketId(id);
+  const bucketRef = db.collection(DASHBOARD_DOCS_COL).doc(normalizedDay).collection(dashboardCollectionByKind(kind)).doc(bucket);
+  const key = toDashboardItemKey(id);
+  const safeRow = kind === 'replacement' ? toDashboardReplacementRow(id, row) : toDashboardAttendanceRow(id, row);
+  await touchDashboardRoot(normalizedDay, { kind, source });
+  await bucketRef.set(
+    {
+      fecha: normalizedDay,
+      bucket,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      [`items.${key}`]: safeRow
+    },
+    { merge: true }
+  );
+}
+
+async function deleteDashboardBucketItem(day, { kind, docId, source = 'system' } = {}) {
+  const normalizedDay = String(day || '').trim();
+  const id = String(docId || '').trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(normalizedDay) || !id) return;
+  const db = admin.firestore();
+  const bucket = getDashboardBucketId(id);
+  const bucketRef = db.collection(DASHBOARD_DOCS_COL).doc(normalizedDay).collection(dashboardCollectionByKind(kind)).doc(bucket);
+  const key = toDashboardItemKey(id);
+  await touchDashboardRoot(normalizedDay, { kind, source });
+  await bucketRef.set(
+    {
+      fecha: normalizedDay,
+      bucket,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      [`items.${key}`]: admin.firestore.FieldValue.delete()
+    },
+    { merge: true }
+  );
+}
+
+async function syncDashboardDocsOnWriteEvent(event, { kind = 'attendance' } = {}) {
+  try {
+    const before = event?.data?.before;
+    const after = event?.data?.after;
+    const beforeExists = Boolean(before?.exists);
+    const afterExists = Boolean(after?.exists);
+    const beforeId = String(before?.id || event?.params?.docId || '').trim();
+    const afterId = String(after?.id || event?.params?.docId || '').trim();
+    const beforeRow = beforeExists ? before.data() || {} : {};
+    const afterRow = afterExists ? after.data() || {} : {};
+    const beforeDay = String(beforeRow.fecha || '').trim() || (/^\d{4}-\d{2}-\d{2}/.test(beforeId) ? beforeId.slice(0, 10) : '');
+    const afterDay = String(afterRow.fecha || '').trim() || (/^\d{4}-\d{2}-\d{2}/.test(afterId) ? afterId.slice(0, 10) : '');
+    const changedDay = beforeExists && afterExists && beforeDay && afterDay && beforeDay !== afterDay;
+
+    if (beforeExists && (!afterExists || changedDay)) {
+      await deleteDashboardBucketItem(beforeDay, { kind, docId: beforeId, source: `${kind}_write_delete` });
+    }
+    if (afterExists) {
+      await upsertDashboardBucketItem(afterDay, { kind, docId: afterId, row: afterRow, source: `${kind}_write_upsert` });
+    }
+  } catch (err) {
+    logger.error('syncDashboardDocsOnWriteEvent failed', { kind, err: String(err?.message || err) });
+  }
+}
+
+async function refreshDailyMetricsForDate(fecha, opts = {}) {
+  const day = String(fecha || '').trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return null;
+  const db = admin.firestore();
+  try {
+    const [attendanceSnap, replacementsSnap, sedesRows, employeesRows, superRows, novedadesRows, closed] = await Promise.all([
+      db.collection('attendance').where('fecha', '==', day).get(),
+      db.collection('import_replacements').where('fecha', '==', day).get(),
+      getCachedRows('sedesRows', async () => {
+        const snap = await db.collection('sedes').get();
+        return snap.docs.map((d) => d.data() || {});
+      }),
+      getCachedRows('employeesRows', async () => {
+        const snap = await db.collection('employees').get();
+        return snap.docs.map((d) => d.data() || {});
+      }),
+      getCachedRows('supernumerariosActivosRows', async () => {
+        const snap = await db.collection('supernumerarios').where('estado', '==', 'activo').get();
+        return snap.docs.map((d) => d.data() || {});
+      }),
+      getCachedRows('novedadesRows', async () => {
+        const snap = await db.collection('novedades').get();
+        return snap.docs.map((d) => d.data() || {});
+      }),
+      isDayClosed(day)
+    ]);
+
+    const planned = sedesRows.reduce((acc, row) => {
+      const n = Number(row?.numeroOperarios || 0);
+      return acc + (Number.isFinite(n) && n > 0 ? Math.trunc(n) : 0);
+    }, 0);
+
+    const superDocs = new Set(
+      superRows
+        .filter((row) => isEmployeeActiveOnDate(row, day))
+        .map((row) => String(row.documento || '').trim())
+        .filter(Boolean)
+    );
+
+    let expected = 0;
+    for (const emp of employeesRows) {
+      if (!isEmployeeEligibleForRegistration(emp, day)) continue;
+      const docNum = String(emp.documento || '').trim();
+      if (docNum && superDocs.has(docNum)) continue;
+      expected += 1;
+    }
+
+    const dayRows = attendanceSnap.docs.map((d) => ({ id: d.id, ...(d.data() || {}) }));
+    const unique = new Set(dayRows.map((r) => String(r.empleadoId || '').trim()).filter(Boolean)).size;
+    const missing = Math.max(0, expected - unique);
+
+    const replByKey = new Map();
+    for (const d of replacementsSnap.docs) {
+      const r = d.data() || {};
+      replByKey.set(`${r.fecha || day}_${r.empleadoId || ''}`, r);
+    }
+
+    const novedadRules = buildNovedadReplacementRules(novedadesRows);
+    let noveltyTotal = 0;
+    let noveltyHandled = 0;
+    let paidServices = 0;
+    let absenteeism = 0;
+    for (const row of dayRows) {
+      const key = `${row.fecha || day}_${row.empleadoId || ''}`;
+      const repl = replByKey.get(key);
+      const decision = String(repl?.decision || '').trim();
+      const needsReplacement = attendanceRequiresReplacement(row, novedadRules);
+      if (needsReplacement) {
+        noveltyTotal += 1;
+        if (decision === 'reemplazo' || decision === 'ausentismo') noveltyHandled += 1;
+      }
+
+      const code = String(row.novedadCodigo || '').trim();
+      const hasReplacement = decision === 'reemplazo';
+      const isCompensatorio = code === '7';
+      const isPaidRow = row.asistio === true || isCompensatorio || hasReplacement;
+      if (isPaidRow) {
+        paidServices += 1;
+      } else if (needsReplacement) {
+        absenteeism += 1;
+      }
+    }
+    const noveltyPending = Math.max(0, noveltyTotal - noveltyHandled);
+    const noContracted = Math.max(0, planned - expected);
+
+    const payload = {
+      fecha: day,
+      closed,
+      planned,
+      expected,
+      unique,
+      missing,
+      noveltyTotal,
+      noveltyHandled,
+      noveltyPending,
+      paidServices,
+      absenteeism,
+      noContracted,
+      attendanceCount: attendanceSnap.size,
+      replacementsCount: replacementsSnap.size,
+      source: String(opts?.source || 'system').trim() || 'system',
+      updatedAt: admin.firestore.FieldValue.serverTimestamp()
+    };
+
+    await db.collection(DAILY_METRICS_COL).doc(day).set(payload, { merge: true });
+    return payload;
+  } catch (err) {
+    logger.error('refreshDailyMetricsForDate failed', { day, err: String(err?.message || err), source: opts?.source || null });
+    return null;
+  }
 }
 
 function buildNovedadReplacementRules(novedadesRows = []) {

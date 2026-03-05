@@ -231,25 +231,45 @@ export const EmployeesAdmin=(mount,deps={})=>{
       return d? new Date(d).toLocaleDateString(): '-';
     }catch{ return '-'; }
   }
-  function formatDateTime(ts){
-    try{
-      const d=ts?.toDate? ts.toDate(): (ts? new Date(ts): null);
-      return d? new Date(d).toLocaleString(): '-';
-    }catch{ return '-'; }
-  }
-  function auditInfoData(e){
-    const hasMod = Boolean(e.lastModifiedAt || e.lastModifiedByEmail || e.lastModifiedByUid);
-    return {
-      action: hasMod ? 'Ultima modificacion' : 'Creacion',
-      user: hasMod ? (e.lastModifiedByEmail||e.lastModifiedByUid||'-') : (e.createdByEmail||e.createdByUid||'-'),
-      date: hasMod ? formatDateTime(e.lastModifiedAt) : formatDateTime(e.createdAt)
-    };
+  async function openCargoHistoryModal(e){
+    const employeeId=String(e?.id||'').trim();
+    if(!employeeId || typeof deps.streamEmployeeCargoHistory!=='function'){
+      showInfoModal('Historial de cargos',['No hay historial disponible para este empleado.']);
+      return;
+    }
+    showInfoModal(`Historial de cargos - ${e?.nombre||'-'}`,['Cargando...']);
+    let done=false;
+    const un=deps.streamEmployeeCargoHistory(employeeId,(rows)=>{
+      if(done) return;
+      done=true;
+      const list=Array.isArray(rows)? rows:[];
+      if(!list.length){
+        showInfoModal(`Historial de cargos - ${e?.nombre||'-'}`,['Sin registros.']);
+        un?.();
+        return;
+      }
+      const lines=list.map((row,idx)=>{
+        const ingreso=formatDate(row.fechaIngreso);
+        const retiro=row.fechaRetiro ? formatDate(row.fechaRetiro) : 'Activo';
+        const cargo=row.cargoNombre||row.cargoCodigo||'-';
+        return `${idx+1}. ${cargo} | Ingreso: ${ingreso} | Retiro: ${retiro}`;
+      });
+      showInfoModal(`Historial de cargos - ${e?.nombre||'-'}`,lines);
+      un?.();
+    });
+    setTimeout(()=>{
+      if(done) return;
+      done=true;
+      showInfoModal(`Historial de cargos - ${e?.nombre||'-'}`,['No se pudo cargar el historial. Intenta de nuevo.']);
+      un?.();
+    },5000);
   }
   function actionsCell(e){
     const box=el('div',{className:'row-actions'},[]);
-    const btnEdit=el('button',{className:'btn'},['Editar']);
+    const btnEdit=el('button',{className:'btn btn--icon',title:'Editar','aria-label':'Editar'},['\u270E']);
     btnEdit.addEventListener('click',()=>{ const tr=tbody.querySelector(`tr[data-id="${e.id}"]`); if(tr) startEdit(tr,e); });
-    const btnToggle=el('button',{className:'btn '+(e.estado==='activo'?'btn--danger':'' )},[ e.estado==='activo'?'Desactivar':'Activar' ]);
+    const isActive=e.estado==='activo';
+    const btnToggle=el('button',{className:'btn btn--icon '+(isActive?'btn--danger':'' ),title:isActive?'Desactivar':'Activar','aria-label':isActive?'Desactivar':'Activar'},[ isActive?'\u23FB':'\u21BA' ]);
     btnToggle.addEventListener('click',async()=>{
       const target=e.estado==='activo'?'inactivo':'activo';
       try{
@@ -275,8 +295,8 @@ export const EmployeesAdmin=(mount,deps={})=>{
         await deps.addAuditLog?.({ targetType:'employee', targetId:e.id, action: target==='activo'?'activate_employee':'deactivate_employee', before:{estado:e.estado, fechaRetiro:e.fechaRetiro||null}, after:{estado:target, fechaRetiro:retiroDate||null}, note: modal.values.detail||null });
       }catch(err){ alert('Error: '+(err?.message||err)); }
     });
-    const btnInfo=el('button',{className:'btn',title:'Ver informacion del registro','aria-label':'Ver informacion del registro'},['ⓘ']);
-    btnInfo.addEventListener('click',()=>{ const info=auditInfoData(e); showInfoModal('Informacion del registro',[`Evento: ${info.action}`,`Usuario: ${info.user}`,`Fecha: ${info.date}`]); });
+    const btnInfo=el('button',{className:'btn btn--icon',title:'Ver informacion','aria-label':'Ver informacion'},['\u24D8']);
+    btnInfo.addEventListener('click',()=>{ openCargoHistoryModal(e); });
     box.append(btnEdit,btnToggle,btnInfo); return box;
   }
   function startEdit(tr,e){

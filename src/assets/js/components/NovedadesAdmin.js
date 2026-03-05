@@ -127,9 +127,9 @@ export const NovedadesAdmin=(mount,deps={})=>{
   }
   function actionsCell(n){
     const box=el('div',{className:'row-actions'},[]);
-    const btnEdit=el('button',{className:'btn'},['Editar']);
+    const btnEdit=el('button',{className:'btn btn--icon',title:'Editar'},['\u270E']);
     btnEdit.addEventListener('click',()=>{ const tr=tbody.querySelector(`tr[data-id="${n.id}"]`); if(tr) startEdit(tr,n); });
-    const btnToggle=el('button',{className:'btn '+(n.estado==='activo'?'btn--danger':'' )},[ n.estado==='activo'?'Desactivar':'Activar' ]);
+    const btnToggle=el('button',{className:'btn btn--icon '+(n.estado==='activo'?'btn--danger':'' ),title:n.estado==='activo'?'Desactivar':'Activar','aria-label':n.estado==='activo'?'Desactivar':'Activar'},[ n.estado==='activo'?'\u23FB':'\u21BA' ]);
     btnToggle.addEventListener('click',async()=>{
       const target=n.estado==='activo'?'inactivo':'activo';
       const modal=await showActionModal({
@@ -141,7 +141,7 @@ export const NovedadesAdmin=(mount,deps={})=>{
       if(!modal.confirmed) return;
       try{ await deps.setNovedadStatus?.(n.id,target); await deps.addAuditLog?.({ targetType:'novedad', targetId:n.id, action: target==='activo'?'activate_novedad':'deactivate_novedad', before:{estado:n.estado}, after:{estado:target}, note: modal.values.detail||null }); }catch(e){ alert('Error: '+(e?.message||e)); }
     });
-    const btnInfo=el('button',{className:'btn',title:'Ver informacion del registro','aria-label':'Ver informacion del registro'},['ⓘ']);
+    const btnInfo=el('button',{className:'btn btn--icon',title:'Ver informacion','aria-label':'Ver informacion'},['\u24D8']);
     btnInfo.addEventListener('click',()=>{ const info=auditInfoData(n); showInfoModal('Informacion del registro',[`Evento: ${info.action}`,`Usuario: ${info.user}`,`Fecha: ${info.date}`]); });
     box.append(btnEdit,btnToggle,btnInfo); return box;
   }

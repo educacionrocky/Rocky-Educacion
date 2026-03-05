@@ -18,6 +18,7 @@ service cloud.firestore {
     match /dependencies/{id} { allow read: if request.auth != null; allow create, update: if isAdminLike(); }
     match /sedes/{id} { allow read: if request.auth != null; allow create, update: if isAdminLike(); }
     match /employees/{id} { allow read: if request.auth != null; allow create, update: if isAdminLike(); }
+    match /employee_cargo_history/{id} { allow read: if request.auth != null; allow create, update: if isAdminLike(); }
     match /supernumerarios/{id} { allow read: if request.auth != null; allow create, update: if isAdminLike(); }
     match /supervisors/{id} { allow read: if request.auth != null; allow create, update: if isAdminLike(); }
     match /cargos/{id} { allow read: if request.auth != null; allow create, update: if isAdminLike(); }
@@ -29,6 +30,9 @@ service cloud.firestore {
     match /import_replacements/{id} { allow read: if request.auth != null; allow create, update: if isAdminLike(); }
     match /whatsapp_incoming/{id} { allow read: if request.auth != null; allow write: if false; }
     match /daily_closures/{id} { allow read: if request.auth != null; allow create, update: if isAdminLike(); }
+    match /daily_metrics/{id} { allow read: if request.auth != null; allow create, update: if isAdminLike(); }
+    match /dashboard_docs/{id} { allow read: if request.auth != null; allow create, update: if isAdminLike(); }
+    match /dashboard_docs/{id}/{sub=**} { allow read: if request.auth != null; allow create, update: if isAdminLike(); }
     match /daily_closure_snapshots/{id} { allow read: if request.auth != null; allow create, update: if isAdminLike(); }
     match /daily_closure_snapshots/{id}/{sub=**} { allow read: if request.auth != null; allow create, update: if isAdminLike(); }
 

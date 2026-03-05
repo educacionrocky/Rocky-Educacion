@@ -39,9 +39,9 @@ export const WhatsAppLive = (mount, deps = {}) => {
       ])
     ]),
     el('section', { className: 'wa-stats wa-stats--nov mt-2' }, [
-      statCard('Novedades', 'waNoveltyTotal', '0'),
-      statCard('Gestionadas', 'waNoveltyHandled', '0'),
-      statCard('Pendientes', 'waNoveltyPending', '0')
+      statCard('Novedades', 'waNoveltyTotal', '0', 'statNoveltyTotal'),
+      statCard('Gestionadas', 'waNoveltyHandled', '0', 'statNoveltyHandled'),
+      statCard('Pendientes', 'waNoveltyPending', '0', 'statNoveltyPending')
     ]),
     el('div', { className: 'mt-2 table-wrap' }, [
         el('table', { className: 'table wa-live-table' }, [
@@ -71,7 +71,8 @@ export const WhatsAppLive = (mount, deps = {}) => {
         el('tbody', {})
       ])
     ]),
-    el('div', { className: 'mt-2', style: 'display:flex;justify-content:flex-end;' }, [
+    el('div', { className: 'mt-2', style: 'display:flex;justify-content:space-between;gap:.5rem;align-items:center;flex-wrap:wrap;' }, [
+      el('div', { id: 'waModeHint', className: 'text-muted', style: 'font-size:.86rem;' }, ['Vista completa del dia (dashboard docs)']),
       el('button', { id: 'btnManualClose', className: 'btn btn--primary', type: 'button' }, ['Cerrar dia'])
     ]),
     el('p', { id: 'waMsg', className: 'text-muted mt-2' }, ['Conectando...'])
@@ -81,10 +82,16 @@ export const WhatsAppLive = (mount, deps = {}) => {
   const msg = qs('#waMsg', ui);
   const searchInput = qs('#waSearch', ui);
   const noveltyFilter = qs('#waNoveltyFilter', ui);
+  const modeHint = qs('#waModeHint', ui);
   const btnManualClose = qs('#btnManualClose', ui);
+  const statNoveltyTotal = qs('#statNoveltyTotal', ui);
+  const statNoveltyHandled = qs('#statNoveltyHandled', ui);
+  const statNoveltyPending = qs('#statNoveltyPending', ui);
 
   let attendance = [];
   let replacements = [];
+  let statsAttendance = [];
+  let statsReplacements = [];
   let supernumerarios = [];
   let novedades = [];
   let employees = [];
@@ -96,8 +103,15 @@ export const WhatsAppLive = (mount, deps = {}) => {
   let unNovedades = null;
   let unEmployees = null;
   let unSedes = null;
+  let unDailyMetrics = null;
+  let unDashboardAttendance = null;
+  let unDashboardReplacements = null;
   let sortKey = 'hora';
   let sortDir = -1;
+  let usingDashboardDocs = false;
+  let lastLegacyBackfillAt = 0;
+  let dailyMetrics = null;
+  let cardFilter = 'all';
 
   function replacementMap() {
     const map = new Map();
@@ -258,6 +272,43 @@ export const WhatsAppLive = (mount, deps = {}) => {
     return set;
   }
 
+  function mergeReplacements(baseRows = [], newRows = []) {
+    const map = new Map();
+    (baseRows || []).forEach((r) => {
+      const k = `${r.fecha || ''}_${r.empleadoId || ''}`;
+      map.set(k, r);
+    });
+    (newRows || []).forEach((r) => {
+      const k = `${r.fecha || ''}_${r.empleadoId || ''}`;
+      map.set(k, r);
+    });
+    return Array.from(map.values());
+  }
+
+  async function loadLegacySnapshotIfNeeded() {
+    if (!deps.listAttendanceRange || !deps.listImportReplacementsRange) return;
+    const expectedRows = Number(dailyMetrics?.attendanceCount || 0) || 0;
+    const currentRows = (attendance || []).length;
+    if (expectedRows <= 0 || currentRows >= expectedRows) return;
+    const now = Date.now();
+    if (now - Number(lastLegacyBackfillAt || 0) < 8000) return;
+    lastLegacyBackfillAt = now;
+    msg.textContent = 'Sincronizando respaldo para completar registros del dia...';
+    try {
+      const [att, repl] = await Promise.all([
+        deps.listAttendanceRange(today, today),
+        deps.listImportReplacementsRange(today, today)
+      ]);
+      attendance = att || [];
+      replacements = repl || [];
+      statsAttendance = attendance;
+      statsReplacements = replacements;
+      render();
+    } catch (err) {
+      msg.textContent = `Error cargando respaldo legacy: ${err?.message || err}`;
+    }
+  }
+
   function applyFilters(rows) {
     const term = String(searchInput.value || '').trim().toLowerCase();
     const selectedType = String(noveltyFilter?.value || 'all').trim();
@@ -268,6 +319,19 @@ export const WhatsAppLive = (mount, deps = {}) => {
       if (selectedType === 'all') return true;
       const rowType = noveltyTypeKey(r);
       return rowType === selectedType;
+    });
+
+    out = out.filter((r) => {
+      if (cardFilter === 'all') return true;
+      const isNovelty = canAssignReplacement(r);
+      const key = `${r.fecha || ''}_${r.empleadoId || ''}`;
+      const repl = replMap.get(key) || null;
+      const decision = String(repl?.decision || '').trim();
+      const handled = decision === 'reemplazo' || decision === 'ausentismo';
+      if (cardFilter === 'novelty_total') return isNovelty;
+      if (cardFilter === 'novelty_handled') return isNovelty && handled;
+      if (cardFilter === 'novelty_pending') return isNovelty && !handled;
+      return true;
     });
 
     if (!term) return out;
@@ -341,7 +405,7 @@ export const WhatsAppLive = (mount, deps = {}) => {
 
   function refreshNoveltyFilterOptions() {
     if (!noveltyFilter) return;
-    const dayRows = (attendance || []).filter((r) => String(r.fecha || '').trim() === today);
+    const dayRows = (statsAttendance || []).filter((r) => String(r.fecha || '').trim() === today);
     const labels = Array.from(new Set(dayRows.map((r) => noveltyTypeLabel(r)).filter(Boolean))).sort((a, b) => a.localeCompare(b));
     const current = String(noveltyFilter.value || 'all').trim();
     const options = [
@@ -392,6 +456,9 @@ export const WhatsAppLive = (mount, deps = {}) => {
         fechaOperacion: row.fecha,
         assignments: [assignment]
       });
+      replacements = mergeReplacements(replacements, [assignment]);
+      statsReplacements = mergeReplacements(statsReplacements, [assignment]);
+      render();
       msg.textContent = selected ? 'Reemplazo guardado correctamente.' : 'Ausentismo guardado correctamente.';
       if (selectEl) selectEl.disabled = true;
       btn.disabled = true;
@@ -555,8 +622,30 @@ export const WhatsAppLive = (mount, deps = {}) => {
     qs('#waNoveltyTotal', ui).textContent = String(stats.noveltyTotal);
     qs('#waNoveltyHandled', ui).textContent = String(stats.noveltyHandled);
     qs('#waNoveltyPending', ui).textContent = String(stats.noveltyPending);
-    msg.textContent = `Total registros: ${rows.length}`;
+    msg.textContent = usingDashboardDocs
+      ? `Total registros del dia (dashboard docs): ${rows.length}`
+      : `Total registros del dia: ${rows.length}`;
+    updateCardFilterUI();
     updateSortIndicators();
+  }
+
+  function setCardFilter(next) {
+    cardFilter = cardFilter === next ? 'all' : next;
+    render();
+  }
+
+  function paintCard(cardEl, active) {
+    if (!cardEl) return;
+    cardEl.style.cursor = 'pointer';
+    cardEl.style.outline = active ? '2px solid #0ea5e9' : 'none';
+    cardEl.style.outlineOffset = active ? '2px' : '0';
+    cardEl.style.background = active ? '#eef8ff' : '';
+  }
+
+  function updateCardFilterUI() {
+    paintCard(statNoveltyTotal, cardFilter === 'novelty_total');
+    paintCard(statNoveltyHandled, cardFilter === 'novelty_handled');
+    paintCard(statNoveltyPending, cardFilter === 'novelty_pending');
   }
 
   function sortValueForRow(row, key, replMap) {
@@ -583,26 +672,30 @@ export const WhatsAppLive = (mount, deps = {}) => {
   }
 
   function calculateStats() {
-    const dayRows = (attendance || []).filter((r) => String(r.fecha || '').trim() === today);
-    const unique = new Set(dayRows.map((r) => String(r.empleadoId || '').trim()).filter(Boolean)).size;
+    const dayRows = (statsAttendance || []).filter((r) => String(r.fecha || '').trim() === today);
+    const uniqueLocal = new Set(dayRows.map((r) => String(r.empleadoId || '').trim()).filter(Boolean)).size;
     const supernumerarioDocs = new Set(
       (supernumerarios || [])
         .filter((s) => isEmployeeExpectedForDate(s, today))
         .map((s) => String(s?.documento || '').trim())
         .filter(Boolean)
     );
-    const expected = (employees || []).filter((e) => {
+    const expectedLocal = (employees || []).filter((e) => {
       if (!isEmployeeExpectedForDate(e, today)) return false;
       const doc = String(e?.documento || '').trim();
       if (!doc) return true;
       return !supernumerarioDocs.has(doc);
     }).length;
-    const planned = (sedes || []).reduce((acc, s) => {
+    const plannedLocal = (sedes || []).reduce((acc, s) => {
       const n = parseOperatorCount(s?.numeroOperarios);
       return acc + (Number.isFinite(n) && n > 0 ? n : 0);
     }, 0);
-    const missing = Math.max(0, expected - unique);
-    const replMap = replacementMap();
+    const missingLocal = Math.max(0, expectedLocal - uniqueLocal);
+    const replMap = new Map();
+    (statsReplacements || []).forEach((r) => {
+      const key = `${r.fecha || ''}_${r.empleadoId || ''}`;
+      replMap.set(key, r);
+    });
     const noveltyTotal = dayRows.filter((r) => canAssignReplacement(r)).length;
     const noveltyHandled = dayRows.filter((r) => {
       if (!canAssignReplacement(r)) return false;
@@ -613,46 +706,100 @@ export const WhatsAppLive = (mount, deps = {}) => {
       return decision === 'reemplazo' || decision === 'ausentismo';
     }).length;
     const noveltyPending = Math.max(0, noveltyTotal - noveltyHandled);
-    return { planned, expected, unique, missing, noveltyTotal, noveltyHandled, noveltyPending };
+    const useDailyMetrics = dailyMetrics && String(dailyMetrics.fecha || '').trim() === today;
+    return {
+      planned: useDailyMetrics ? (Number(dailyMetrics.planned || 0) || 0) : plannedLocal,
+      expected: useDailyMetrics ? (Number(dailyMetrics.expected || 0) || 0) : expectedLocal,
+      unique: useDailyMetrics ? (Number(dailyMetrics.unique || 0) || 0) : uniqueLocal,
+      missing: useDailyMetrics ? (Number(dailyMetrics.missing || 0) || 0) : missingLocal,
+      noveltyTotal,
+      noveltyHandled,
+      noveltyPending
+    };
   }
 
   function bindDateStreams() {
     unAttendance?.();
     unReplacements?.();
-
-    if (!deps.streamAttendanceByDate || !deps.streamImportReplacementsByDate) {
-      msg.textContent = 'No hay conexion de datos para registros en vivo.';
+    unDailyMetrics?.();
+    unDashboardAttendance?.();
+    unDashboardReplacements?.();
+    unDashboardAttendance = null;
+    unDashboardReplacements = null;
+    attendance = [];
+    replacements = [];
+    statsAttendance = [];
+    statsReplacements = [];
+    dailyMetrics = null;
+    lastLegacyBackfillAt = 0;
+    usingDashboardDocs = false;
+    if (modeHint) modeHint.textContent = 'Vista completa del dia (dashboard docs)';
+    render();
+    if (deps.streamDailyMetricsByDate) {
+      unDailyMetrics = deps.streamDailyMetricsByDate(
+        today,
+        (row) => {
+          dailyMetrics = row || null;
+          loadLegacySnapshotIfNeeded();
+          render();
+        },
+        () => {}
+      );
+    }
+    if (deps.streamDashboardAttendanceByDate && deps.streamDashboardReplacementsByDate) {
+      usingDashboardDocs = true;
+      unDashboardAttendance = deps.streamDashboardAttendanceByDate(
+        today,
+        (rows) => {
+          attendance = rows || [];
+          statsAttendance = attendance;
+          loadLegacySnapshotIfNeeded();
+          render();
+        },
+        () => {}
+      );
+      unDashboardReplacements = deps.streamDashboardReplacementsByDate(
+        today,
+        (rows) => {
+          replacements = rows || [];
+          statsReplacements = replacements;
+          render();
+        },
+        () => {}
+      );
       return;
     }
-
-    const attendanceOnData = (rows) => {
-      attendance = rows || [];
-      render();
-    };
-    const attendanceOnError = (err) => {
-      msg.textContent = `Error leyendo attendance: ${err?.code || err?.message || err}`;
-    };
-
-    unAttendance = deps.streamAttendanceByDate(
-      today,
-      attendanceOnData,
-      attendanceOnError
-    );
-
-    unReplacements = deps.streamImportReplacementsByDate(
-      today,
-      (rows) => {
-        replacements = rows || [];
+    if (modeHint) modeHint.textContent = 'Modo legacy (sin dashboard docs)';
+    Promise.all([
+      deps.listAttendanceRange?.(today, today) || [],
+      deps.listImportReplacementsRange?.(today, today) || []
+    ])
+      .then(([att, repl]) => {
+        attendance = att || [];
+        replacements = repl || [];
+        statsAttendance = attendance;
+        statsReplacements = replacements;
         render();
-      },
-      (err) => {
-        msg.textContent = `Error leyendo replacements: ${err?.code || err?.message || err}`;
-      }
-    );
+      })
+      .catch((err) => {
+        msg.textContent = `Error cargando registro diario: ${err?.message || err}`;
+      });
   }
 
-  searchInput.addEventListener('input', render);
-  noveltyFilter?.addEventListener('change', render);
+  searchInput.addEventListener('input', () => { render(); });
+  noveltyFilter?.addEventListener('change', () => { render(); });
+  statNoveltyTotal?.addEventListener('click', () => setCardFilter('novelty_total'));
+  statNoveltyHandled?.addEventListener('click', () => setCardFilter('novelty_handled'));
+  statNoveltyPending?.addEventListener('click', () => setCardFilter('novelty_pending'));
+  [statNoveltyTotal, statNoveltyHandled, statNoveltyPending].forEach((card, idx) => {
+    if (!card) return;
+    const key = idx === 0 ? 'novelty_total' : idx === 1 ? 'novelty_handled' : 'novelty_pending';
+    card.addEventListener('keydown', (ev) => {
+      if (ev.key !== 'Enter' && ev.key !== ' ') return;
+      ev.preventDefault();
+      setCardFilter(key);
+    });
+  });
   ui.querySelectorAll('th[data-sort]').forEach((th) => {
     th.addEventListener('click', () => {
       const key = String(th.getAttribute('data-sort') || '').trim();
@@ -732,6 +879,9 @@ export const WhatsAppLive = (mount, deps = {}) => {
   return () => {
     unAttendance?.();
     unReplacements?.();
+    unDailyMetrics?.();
+    unDashboardAttendance?.();
+    unDashboardReplacements?.();
     unSupernumerarios?.();
     unNovedades?.();
     unEmployees?.();
@@ -739,8 +889,10 @@ export const WhatsAppLive = (mount, deps = {}) => {
   };
 };
 
-function statCard(label, id, value) {
-  return el('article', { className: 'wa-stat card' }, [
+function statCard(label, id, value, cardId = null) {
+  const attrs = { className: 'wa-stat card', role: 'button', tabindex: '0' };
+  if (cardId) attrs.id = cardId;
+  return el('article', attrs, [
     el('small', { className: 'wa-stat__label' }, [label]),
     el('strong', { id, className: 'wa-stat__value' }, [value])
   ]);

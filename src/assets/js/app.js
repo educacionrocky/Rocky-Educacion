@@ -61,7 +61,7 @@ let unsubRoleMatrix=null; let unsubUserOverrides=null; let unsubAudit=null;
           getUserOverrides:fb.getUserOverrides, setUserOverrides:fb.setUserOverrides, clearUserOverrides:fb.clearUserOverrides,
           addAuditLog:fb.addAuditLog, streamAuditLogs:(cb)=>{ if(unsubAudit)unsubAudit(); unsubAudit=fb.streamAuditLogs(cb); return unsubAudit; },
           // users
-          streamUsers:fb.streamUsers, setUserRole:fb.setUserRole, findUserByEmail:fb.findUserByEmail,
+          streamUsers:fb.streamUsers, setUserRole:fb.setUserRole, setUserStatus:fb.setUserStatus, softDeleteUser:fb.softDeleteUser, findUserByEmail:fb.findUserByEmail,
           // zonas
           streamZones:fb.streamZones, createZone:fb.createZone, updateZone:fb.updateZone, setZoneStatus:fb.setZoneStatus, findZoneByCode:fb.findZoneByCode, getNextZoneCode:fb.getNextZoneCode,
           // dependencias
@@ -71,6 +71,7 @@ let unsubRoleMatrix=null; let unsubUserOverrides=null; let unsubAudit=null;
           createSedesBulk:fb.createSedesBulk,
           // empleados
           streamEmployees:fb.streamEmployees, createEmployee:fb.createEmployee, updateEmployee:fb.updateEmployee, setEmployeeStatus:fb.setEmployeeStatus, findEmployeeByCode:fb.findEmployeeByCode, findEmployeeByDocument:fb.findEmployeeByDocument, getNextEmployeeCode:fb.getNextEmployeeCode,
+          streamEmployeeCargoHistory:fb.streamEmployeeCargoHistory,
           createEmployeesBulk:fb.createEmployeesBulk,
           // supernumerarios
           streamSupernumerarios:fb.streamSupernumerarios, createSupernumerario:fb.createSupernumerario, updateSupernumerario:fb.updateSupernumerario, setSupernumerarioStatus:fb.setSupernumerarioStatus, findSupernumerarioByCode:fb.findSupernumerarioByCode, findSupernumerarioByDocument:fb.findSupernumerarioByDocument, getNextSupernumerarioCode:fb.getNextSupernumerarioCode, createSupernumerariosBulk:fb.createSupernumerariosBulk,
@@ -83,8 +84,12 @@ let unsubRoleMatrix=null; let unsubUserOverrides=null; let unsubAudit=null;
           // operacion
           confirmImportOperation:fb.confirmImportOperation, saveImportReplacements:fb.saveImportReplacements,
           closeOperationDayManual:fb.closeOperationDayManual,
-          isOperationDayClosed:fb.isOperationDayClosed, listClosedOperationDaysRange:fb.listClosedOperationDaysRange,
+          isOperationDayClosed:fb.isOperationDayClosed, listClosedOperationDaysRange:fb.listClosedOperationDaysRange, listDailyClosuresRange:fb.listDailyClosuresRange,
           listSedeStatusRange:fb.listSedeStatusRange, listAttendanceRange:fb.listAttendanceRange, listImportReplacementsRange:fb.listImportReplacementsRange,
+          listDailyMetricsRange:fb.listDailyMetricsRange,
+          streamDailyMetricsByDate:fb.streamDailyMetricsByDate,
+          streamDashboardAttendanceByDate:fb.streamDashboardAttendanceByDate,
+          streamDashboardReplacementsByDate:fb.streamDashboardReplacementsByDate,
           streamImportHistory:fb.streamImportHistory, streamDailyClosures:fb.streamDailyClosures, streamWhatsAppIncoming:fb.streamWhatsAppIncoming,
           streamAttendanceByDate:fb.streamAttendanceByDate, streamAttendanceRecent:fb.streamAttendanceRecent, streamImportReplacementsByDate:fb.streamImportReplacementsByDate
         };
@@ -95,7 +100,14 @@ let unsubRoleMatrix=null; let unsubUserOverrides=null; let unsubAudit=null;
         fb.authState(async (user)=>{
           if(unsubRoleMatrix){unsubRoleMatrix();unsubRoleMatrix=null;} if(unsubUserOverrides){unsubUserOverrides();unsubUserOverrides=null;}
           if(!user){ setState({ user:null, userProfile:null, userOverrides:{} }); headerMount.replaceChildren(Header(deps)); sidebarMount.replaceChildren(Sidebar()); if(location.hash!=="#/login") navigate('/login'); else refreshRoute(); return; }
-          await fb.ensureUserProfile(user); const profile=await fb.loadUserProfile(user.uid); setState({ user, userProfile: profile });
+          await fb.ensureUserProfile(user); const profile=await fb.loadUserProfile(user.uid);
+          const status=String(profile?.estado||'activo').toLowerCase();
+          if(status==='inactivo' || status==='eliminado'){
+            try{ sessionStorage.setItem('auth_block_msg', status==='eliminado' ? 'Tu usuario fue eliminado. Contacta al administrador.' : 'Tu usuario esta inactivo. Contacta al administrador.'); }catch{}
+            await fb.logout();
+            return;
+          }
+          setState({ user, userProfile: profile });
           unsubRoleMatrix=fb.streamRoleMatrix((map)=> setState({ roleMatrix: map }));
           unsubUserOverrides=fb.streamUserOverrides(user.uid,(ov)=> setState({ userOverrides: ov||{} }));
           headerMount.replaceChildren(Header(deps)); sidebarMount.replaceChildren(Sidebar());
@@ -117,7 +129,7 @@ let unsubRoleMatrix=null; let unsubUserOverrides=null; let unsubAudit=null;
   addRoute('/notes', ()=> requireAuth(()=> Notes(root)));
 
   // Gobierno
-  addRoute('/permissions', ()=> requireAuth(()=> { if(!isSuperAdmin()) return block('Solo SuperAdmin puede ver esto.'); PermissionsCenter(root, deps); }));
+  addRoute('/permissions', ()=> requireAuth(()=> { if(!isSuperAdmin()) return block('Solo SuperAdmin puede ver esto.'); return PermissionsCenter(root, deps); }));
 
   // Administración
   addRoute('/users', ()=> requireAuth(()=> guard(PERMS.MANAGE_USERS, ()=> UsersAdmin(root, deps))));
@@ -144,7 +156,7 @@ let unsubRoleMatrix=null; let unsubUserOverrides=null; let unsubAudit=null;
   addRoute('/absenteeism', ()=> requireAuth(()=> guard(PERMS.MANAGE_ABSENTEEISM, ()=> Absenteeism(root, deps))));
 
   // Consultor
-  addRoute('/reports', ()=> requireAuth(()=> guard(PERMS.VIEW_REPORTS, ()=> Reports(root))));
+  addRoute('/reports', ()=> requireAuth(()=> guard(PERMS.VIEW_REPORTS, ()=> Reports(root, deps))));
 
   // Supervisor/Empleado
   addRoute('/upload', ()=> requireAuth(()=> guard(PERMS.UPLOAD_DATA, ()=> CargarDatos(root))));
