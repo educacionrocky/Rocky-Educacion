@@ -183,6 +183,29 @@ export const WhatsAppLive = (mount, deps = {}) => {
       .toLowerCase();
   }
 
+  function normalizeIsoDate(value) {
+    const v = String(value || '').trim();
+    return /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : null;
+  }
+
+  function inclusiveDaysBetween(startDate, endDate) {
+    const start = normalizeIsoDate(startDate);
+    const end = normalizeIsoDate(endDate);
+    if (!start || !end || end < start) return null;
+    const [sy, sm, sd] = start.split('-').map((n) => Number(n));
+    const [ey, em, ed] = end.split('-').map((n) => Number(n));
+    const sUtc = Date.UTC(sy, (sm || 1) - 1, sd || 1);
+    const eUtc = Date.UTC(ey, (em || 1) - 1, ed || 1);
+    return Math.floor((eUtc - sUtc) / 86400000) + 1;
+  }
+
+  function incapacidadDaysForRow(row) {
+    const byRange = inclusiveDaysBetween(row?.incapacidadInicio, row?.incapacidadFin);
+    if (byRange != null) return byRange;
+    const byValue = Number(row?.incapacidadDias);
+    return Number.isFinite(byValue) && byValue > 0 ? byValue : null;
+  }
+
   function findNovedadCatalog(name) {
     const target = normalize(name);
     if (!target) return null;
@@ -342,7 +365,7 @@ export const WhatsAppLive = (mount, deps = {}) => {
         r.nombre || '',
         r.novedadCodigo || '',
         r.novedadNombre || '',
-        r.incapacidadDias || '',
+        incapacidadDaysForRow(r) || '',
         r.novedad || '',
         r.sedeNombre || '',
         r.sedeCodigo || '',
@@ -505,6 +528,8 @@ export const WhatsAppLive = (mount, deps = {}) => {
         const baseNovedadText = String(r.novedadNombre || displayNovedad(r) || '-').trim() || '-';
         const novedadText = isSuperRow ? `${baseNovedadText} · SUPERNUMERARIO` : baseNovedadText;
         const novedadStyle = novedadTextStyleByClass(rowClass);
+        const diasVal = incapacidadDaysForRow(r);
+        const diasTxt = diasVal != null ? String(diasVal) : '-';
 
         if (isSuperRow) {
           const sedeTxt = sedeNameByCode(r.sedeCodigo, r.sedeNombre || '');
@@ -514,7 +539,7 @@ export const WhatsAppLive = (mount, deps = {}) => {
             el('td', {}, [r.documento || '-']),
             el('td', {}, [r.nombre || '-']),
             el('td', {}, [el('span', { style: novedadStyle }, [novedadText])]),
-            el('td', {}, [r.incapacidadDias != null ? String(r.incapacidadDias) : '-']),
+            el('td', {}, [diasTxt]),
             el('td', {}, [el('span', { style: 'color:#1d4ed8;' }, [`REEMPLAZO EN SEDE: ${sedeTxt}`])]),
             el('td', {}, [infoButtonForRow(r)])
           ]);
@@ -527,7 +552,7 @@ export const WhatsAppLive = (mount, deps = {}) => {
             el('td', {}, [r.documento || '-']),
             el('td', {}, [r.nombre || '-']),
             el('td', {}, [el('span', { style: novedadStyle }, [novedadText])]),
-            el('td', {}, [r.incapacidadDias != null ? String(r.incapacidadDias) : '-']),
+            el('td', {}, [diasTxt]),
             el('td', {}, [el('span', { className: 'text-muted' }, ['No aplica'])]),
             el('td', {}, [infoButtonForRow(r)])
           ]);
@@ -540,7 +565,7 @@ export const WhatsAppLive = (mount, deps = {}) => {
             el('td', {}, [r.documento || '-']),
             el('td', {}, [r.nombre || '-']),
             el('td', {}, [el('span', { style: novedadStyle }, [novedadText])]),
-            el('td', {}, [r.incapacidadDias != null ? String(r.incapacidadDias) : '-']),
+            el('td', {}, [diasTxt]),
             el('td', {}, [el('span', { style: 'color:#b91c1c;' }, ['Ausentismo confirmado'])]),
             el('td', {}, [infoButtonForRow(r)])
           ]);
@@ -556,7 +581,7 @@ export const WhatsAppLive = (mount, deps = {}) => {
             el('td', {}, [r.documento || '-']),
             el('td', {}, [r.nombre || '-']),
             el('td', {}, [el('span', { style: novedadStyle }, [novedadText])]),
-            el('td', {}, [r.incapacidadDias != null ? String(r.incapacidadDias) : '-']),
+            el('td', {}, [diasTxt]),
             el('td', {}, [el('span', { style: 'color:#15803d;' }, [repTxt])]),
             el('td', {}, [infoButtonForRow(r)])
           ]);
@@ -617,7 +642,7 @@ export const WhatsAppLive = (mount, deps = {}) => {
           el('td', {}, [r.documento || '-']),
           el('td', {}, [r.nombre || '-']),
           el('td', {}, [el('span', { style: novedadStyle }, [novedadText])]),
-          el('td', {}, [r.incapacidadDias != null ? String(r.incapacidadDias) : '-']),
+          el('td', {}, [diasTxt]),
           el('td', {}, [replacementCell]),
           el('td', {}, [infoButtonForRow(r)])
         ]);
@@ -663,7 +688,7 @@ export const WhatsAppLive = (mount, deps = {}) => {
     if (key === 'documento') return String(row.documento || '');
     if (key === 'nombre') return String(row.nombre || '').toLowerCase();
     if (key === 'novedad') return String(displayNovedad(row) || row.novedadNombre || row.novedad || '').toLowerCase();
-    if (key === 'dias') return Number(row.incapacidadDias || 0);
+    if (key === 'dias') return Number(incapacidadDaysForRow(row) || 0);
     if (key === 'reemplazo') {
       const repl = replMap.get(`${row.fecha || ''}_${row.empleadoId || ''}`) || {};
       return String(repl.supernumerarioNombre || repl.supernumerarioDocumento || repl.decision || '').toLowerCase();

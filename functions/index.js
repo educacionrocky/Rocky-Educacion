@@ -360,6 +360,7 @@ exports.finalizeDailyAbsenteeism = onSchedule(
       logger.info('finalizeDailyAbsenteeism skipped: day already closed', { day });
       return;
     }
+    await ensureAutoAttendanceFromIncapacidades(day);
     await ensureAutoAttendanceWithNovedad8(day);
     await ensureAusentismoAssignmentsForDate(day);
     await rebuildSedeStatusForDate(day, { force: true });
@@ -422,6 +423,7 @@ exports.closeOperationDay = onRequest(
           results.push({ day, status: 'already_closed' });
           continue;
         }
+        await ensureAutoAttendanceFromIncapacidades(day);
         await ensureAutoAttendanceWithNovedad8(day);
         await ensureAusentismoAssignmentsForDate(day);
         await rebuildSedeStatusForDate(day, { force: true });
@@ -1352,6 +1354,7 @@ async function prepareNovedadFlow({
   const isSupernumerario = Boolean(superByDoc);
   const startDate = normalizeDate(incapacidadStartDate);
   const endDate = normalizeDate(incapacidadEndDate);
+  const incapacidadDias = calculateInclusiveDateRangeDays(startDate, endDate);
   const novedadLabel = startDate && endDate ? `${novelty.nombre} (${startDate} a ${endDate})` : novelty.nombre;
   if (startDate && endDate) {
     await upsertEmployeeIncapacidad({
@@ -1361,6 +1364,7 @@ async function prepareNovedadFlow({
       novedadNombre: novelty.nombre,
       startDate,
       endDate,
+      incapacidadDias,
       sourceMessageId: row.messageId || docRef.id
     });
   }
@@ -1375,7 +1379,7 @@ async function prepareNovedadFlow({
       novedadCodigo: novelty.codigo,
       novedadNombre: novelty.nombre,
       novedad: novedadLabel,
-      incapacidadDias: null,
+      incapacidadDias,
       incapacidadInicio: startDate,
       incapacidadFin: endDate,
       isSupernumerario,
@@ -2056,11 +2060,24 @@ async function findActiveIncapacidadByEmployee(employeeId, targetDay = todayInBo
   return null;
 }
 
-async function upsertEmployeeIncapacidad({ employeeId, emp, novedadCodigo, novedadNombre, startDate, endDate, sourceMessageId = null }) {
+async function upsertEmployeeIncapacidad({
+  employeeId,
+  emp,
+  novedadCodigo,
+  novedadNombre,
+  startDate,
+  endDate,
+  incapacidadDias = null,
+  sourceMessageId = null
+}) {
   const id = String(employeeId || '').trim();
   const start = normalizeDate(startDate);
   const end = normalizeDate(endDate);
   if (!id || !start || !end) return null;
+  const totalDias =
+    Number.isFinite(Number(incapacidadDias)) && Number(incapacidadDias) > 0
+      ? Number(incapacidadDias)
+      : calculateInclusiveDateRangeDays(start, end);
   const docId = `${id}_${start}_${end}_${String(novedadCodigo || '').trim() || 'NA'}`.replace(/[^\w.-]/g, '_');
   const payload = {
     empleadoId: id,
@@ -2071,6 +2088,7 @@ async function upsertEmployeeIncapacidad({ employeeId, emp, novedadCodigo, noved
     novedadNombre: String(novedadNombre || '').trim() || null,
     fechaInicio: start,
     fechaFin: end,
+    incapacidadDias: totalDias,
     source: 'whatsapp_cloud_api',
     whatsappMessageId: String(sourceMessageId || '').trim() || null,
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -2078,6 +2096,134 @@ async function upsertEmployeeIncapacidad({ employeeId, emp, novedadCodigo, noved
   };
   await admin.firestore().collection(INCAPACITADOS_COL).doc(docId).set(payload, { merge: true });
   return docId;
+}
+
+async function ensureAutoAttendanceFromIncapacidades(fecha) {
+  const day = String(fecha || '').trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return 0;
+
+  const db = admin.firestore();
+  const [incapacidadesSnap, attendanceSnap, cargoMap] = await Promise.all([
+    db.collection(INCAPACITADOS_COL).get(),
+    db.collection('attendance').where('fecha', '==', day).get(),
+    buildCargoMapCached()
+  ]);
+  if (incapacidadesSnap.empty) return 0;
+
+  const existing = new Set(attendanceSnap.docs.map((d) => String(d.id || '').trim()));
+  let pendingBatch = db.batch();
+  let batchOps = 0;
+  let created = 0;
+  const commitBatch = async () => {
+    if (batchOps === 0) return;
+    await pendingBatch.commit();
+    pendingBatch = db.batch();
+    batchOps = 0;
+  };
+
+  for (const d of incapacidadesSnap.docs) {
+    const incap = d.data() || {};
+    const employeeId = String(incap.empleadoId || '').trim();
+    const start = normalizeDate(incap.fechaInicio);
+    const end = normalizeDate(incap.fechaFin);
+    if (!employeeId || !start || !end) continue;
+    if (day < start || day > end) continue;
+
+    const empEntry = await findEmployeeByIdCached(employeeId);
+    if (!empEntry) continue;
+    const emp = empEntry.data || {};
+    if (!isEmployeeEligibleForRegistration(emp, day)) continue;
+
+    const attendanceId = `${day}_${employeeId}`;
+    if (existing.has(attendanceId)) continue;
+
+    const docNum = String(emp.documento || incap.documento || '').trim() || null;
+    const phone = String(emp.telefono || incap.telefono || '').trim() || null;
+    const sedeCodigo = String(emp.sedeCodigo || '').trim() || null;
+    if (!sedeCodigo) continue;
+    const sedeNombre = await resolveSedeNameByCode(sedeCodigo, emp.sedeNombre || null);
+    const incapacidadDias =
+      Number.isFinite(Number(incap.incapacidadDias)) && Number(incap.incapacidadDias) > 0
+        ? Number(incap.incapacidadDias)
+        : calculateInclusiveDateRangeDays(start, end);
+
+    const novedadCodigoRaw = String(incap.novedadCodigo || '').trim();
+    const novedadCodigo = novedadCodigoRaw || null;
+    let novedadNombre = String(incap.novedadNombre || '').trim() || null;
+    if (novedadCodigo) {
+      const nov = await resolveNovedadByCode(novedadCodigo);
+      const nombrePorCodigo = String(nov?.nombre || '').trim() || null;
+      if (!novedadNombre || isGenericIncapacidadLabel(novedadNombre)) {
+        novedadNombre = nombrePorCodigo;
+      }
+    }
+    const isSupernumerario = resolveEmployeeCargoAlignment(emp, cargoMap) === 'supernumerario';
+    const hora = '23:59:00';
+
+    pendingBatch.set(
+      db.collection('attendance').doc(attendanceId),
+      {
+        fecha: day,
+        hora,
+        empleadoId: employeeId,
+        documento: docNum,
+        nombre: emp.nombre || incap.nombre || null,
+        telefono: phone,
+        sedeCodigo,
+        sedeNombre: sedeNombre || sedeCodigo,
+        asistio: false,
+        novedad: novedadNombre,
+        novedadCodigo,
+        novedadNombre,
+        incapacidadDias,
+        incapacidadInicio: start,
+        incapacidadFin: end,
+        isSupernumerario,
+        source: 'auto_incapacidad_closure',
+        whatsappMessageId: String(incap.whatsappMessageId || '').trim() || null,
+        incapacidadId: d.id,
+        createdAt: admin.firestore.FieldValue.serverTimestamp()
+      },
+      { merge: true }
+    );
+    batchOps += 1;
+
+    pendingBatch.set(
+      db.collection('absenteeism').doc(attendanceId),
+      {
+        fecha: day,
+        hora,
+        empleadoId: employeeId,
+        documento: docNum,
+        nombre: emp.nombre || incap.nombre || null,
+        telefono: phone,
+        sedeCodigo,
+        sedeNombre: sedeNombre || sedeCodigo,
+        estado: 'pendiente',
+        novedad: novedadNombre,
+        novedadCodigo,
+        novedadNombre,
+        incapacidadDias,
+        incapacidadInicio: start,
+        incapacidadFin: end,
+        isSupernumerario,
+        source: 'auto_incapacidad_closure',
+        whatsappMessageId: String(incap.whatsappMessageId || '').trim() || null,
+        incapacidadId: d.id,
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        createdByUid: null,
+        createdByEmail: null
+      },
+      { merge: true }
+    );
+    batchOps += 1;
+    created += 1;
+
+    if (batchOps >= 400) await commitBatch();
+  }
+
+  await commitBatch();
+  return created;
 }
 
 async function registerAttendanceFromEmployeeDoc(empDoc, opts = {}) {
@@ -2089,9 +2235,11 @@ async function registerAttendanceFromEmployeeDoc(empDoc, opts = {}) {
   const novedad = opts.novedad == null ? null : String(opts.novedad).trim() || null;
   const novedadCodigo = opts.novedadCodigo == null ? null : String(opts.novedadCodigo).trim() || null;
   const novedadNombre = opts.novedadNombre == null ? novedad : String(opts.novedadNombre).trim() || null;
-  const incapacidadDias = Number.isInteger(Number(opts.incapacidadDias)) ? Number(opts.incapacidadDias) : null;
   const incapacidadInicio = normalizeDate(opts.incapacidadInicio);
   const incapacidadFin = normalizeDate(opts.incapacidadFin);
+  const incapacidadDiasByRange = calculateInclusiveDateRangeDays(incapacidadInicio, incapacidadFin);
+  const incapacidadDiasByInput = Number.isInteger(Number(opts.incapacidadDias)) ? Number(opts.incapacidadDias) : null;
+  const incapacidadDias = incapacidadDiasByRange != null ? incapacidadDiasByRange : incapacidadDiasByInput;
   const isSupernumerario = opts.isSupernumerario === true;
   const attendanceId = `${fecha}_${empDoc.id}`;
   const messageId = String(opts.messageId || '').trim() || null;
@@ -2948,6 +3096,25 @@ function normalizeDateOnly(value) {
   }
   if (value instanceof Date) return toDateOnlyIso(value);
   return null;
+}
+
+function calculateInclusiveDateRangeDays(startDate, endDate) {
+  const start = normalizeDate(startDate);
+  const end = normalizeDate(endDate);
+  if (!start || !end) return null;
+  if (end < start) return null;
+  const [sy, sm, sd] = start.split('-').map((n) => Number(n));
+  const [ey, em, ed] = end.split('-').map((n) => Number(n));
+  const sUtc = Date.UTC(sy, (sm || 1) - 1, sd || 1);
+  const eUtc = Date.UTC(ey, (em || 1) - 1, ed || 1);
+  const diffDays = Math.floor((eUtc - sUtc) / 86400000);
+  return diffDays + 1;
+}
+
+function isGenericIncapacidadLabel(value) {
+  const t = normalizeUserText(String(value || '').trim());
+  if (!t) return false;
+  return ['incapacidad', 'incapacitado', 'incapacitada', 'incapacidades'].includes(t);
 }
 
 function toDateOnlyIso(date) {
